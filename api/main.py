@@ -10,6 +10,7 @@ import snowflake.connector
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(REPO_ROOT / ".env", override=True)
+GOLD_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA_GOLD", "GOLD")
 
 app = FastAPI(
     title="Recipe Data Platform API",
@@ -28,6 +29,12 @@ def get_connection():
         schema=os.getenv("SNOWFLAKE_SCHEMA_GOLD", "GOLD"),
         role=os.getenv("SNOWFLAKE_ROLE", "agent_role"),
     )
+
+
+def table_name(table: str) -> str:
+    if not GOLD_SCHEMA.replace("_", "").isalnum():
+        raise ValueError(f"Invalid Snowflake schema name: {GOLD_SCHEMA}")
+    return f"{GOLD_SCHEMA}.{table}"
 
 
 @app.get("/health")
@@ -55,7 +62,8 @@ def list_recipes(
     ingredient: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
 ):
-    sql = """
+    catalog_table = table_name("GOLD_API_RECIPE_CATALOG")
+    sql = f"""
     SELECT
         ID,
         TITLE,
@@ -66,7 +74,7 @@ def list_recipes(
         MAIN_INGREDIENT,
         CONFIDENCE,
         PROCESSED_AT
-    FROM GOLD.GOLD_API_RECIPE_CATALOG
+    FROM {catalog_table}
     WHERE 1=1
     """
     params = {}
@@ -105,12 +113,13 @@ def list_recipes(
 
 @app.get("/recipes/filters")
 def get_filters():
-    sql = """
+    catalog_table = table_name("GOLD_API_RECIPE_CATALOG")
+    sql = f"""
     SELECT DISTINCT
         LANGUAGE,
         CUISINE_STYLE,
         MAIN_INGREDIENT
-    FROM GOLD.GOLD_API_RECIPE_CATALOG
+    FROM {catalog_table}
     """
 
     try:
@@ -134,7 +143,8 @@ def get_filters():
 
 @app.get("/recipes/{raw_id}")
 def get_recipe(raw_id: int):
-    sql = """
+    catalog_table = table_name("GOLD_API_RECIPE_CATALOG")
+    sql = f"""
     SELECT
         ID,
         TITLE,
@@ -145,7 +155,7 @@ def get_recipe(raw_id: int):
         MAIN_INGREDIENT,
         CONFIDENCE,
         PROCESSED_AT
-    FROM GOLD.GOLD_API_RECIPE_CATALOG
+    FROM {catalog_table}
     WHERE ID = %(raw_id)s
     """
 

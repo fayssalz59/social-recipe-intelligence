@@ -18,7 +18,7 @@ SILVER_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA_SILVER", "SILVER")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
 
-SYSTEM_PROMPT = (
+_LEGACY_SYSTEM_PROMPT = (
     "Tu es un agent Data Engineer spécialisé dans l'analyse de descriptions de vidéos culinaires TikTok. "
     "Ta tâche est de retourner UNIQUEMENT un objet JSON strictement valide avec ce schéma exact : "
     "{\"lang\": string, \"is_veg\": boolean, \"cuisine\": string, \"ingredient\": string}. "
@@ -28,6 +28,19 @@ SYSTEM_PROMPT = (
     "3. Pour is_veg, mets false si tu n'as pas assez d'information pour conclure végétarien. "
     "4. Utilise des valeurs simples et courtes. "
     "5. Déduis uniquement à partir du texte fourni, sans inventer une recette complète."
+)
+
+
+SYSTEM_PROMPT = (
+    "You are a data engineering agent specialized in analyzing TikTok recipe video descriptions. "
+    "Return only one strictly valid JSON object with this exact schema: "
+    "{\"lang\": string, \"is_veg\": boolean, \"cuisine\": string, \"ingredient\": string}. "
+    "Rules: "
+    "1. No text outside JSON. "
+    "2. If information is missing or ambiguous, use \"unknown\" for text fields. "
+    "3. For is_veg, use false unless the text clearly indicates a vegetarian recipe. "
+    "4. Use short, simple values. "
+    "5. Infer only from the provided text; do not invent a full recipe."
 )
 
 
