@@ -65,6 +65,13 @@ cp .env.example .env
 
 3. Fill in `.env` with your Snowflake, OpenRouter, Kafka, and Airflow values.
 
+   On Linux servers, set Airflow's UID to the user that owns the cloned repository:
+
+```bash
+sed -i "s/^AIRFLOW_UID=.*/AIRFLOW_UID=$(id -u)/" .env
+mkdir -p logs plugins
+```
+
 4. Create the Snowflake objects by running:
 
 ```sql

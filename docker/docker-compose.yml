@@ -1,5 +1,6 @@
 x-airflow-common: &airflow-common
   image: apache/airflow:2.11.0-python3.12
+  user: "${AIRFLOW_UID:-50000}:0"
   env_file:
     - ../.env
     - ./airflow.env
@@ -35,15 +36,16 @@ services:
     <<: *airflow-common
     command: >
       bash -c "
+      mkdir -p /opt/airflow/logs /opt/airflow/plugins &&
       pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt &&
       airflow db migrate &&
-      airflow users create --username $${_AIRFLOW_WWW_USER_USERNAME} --password $${_AIRFLOW_WWW_USER_PASSWORD} --firstname Airflow --lastname Admin --role Admin --email admin@example.com
+      airflow users create --username $${_AIRFLOW_WWW_USER_USERNAME} --password $${_AIRFLOW_WWW_USER_PASSWORD} --firstname Airflow --lastname Admin --role Admin --email admin@example.com || true
       "
 
   airflow-webserver:
     <<: *airflow-common
     command: >
-      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow webserver"
+      bash -c "mkdir -p /opt/airflow/logs /opt/airflow/plugins && rm -f /opt/airflow/airflow-webserver.pid && pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow webserver"
     ports:
       - "127.0.0.1:18080:8080"
     healthcheck:
@@ -55,7 +57,7 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: >
-      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow scheduler"
+      bash -c "mkdir -p /opt/airflow/logs /opt/airflow/plugins && pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow scheduler"
 
   streamlit:
     image: python:3.11-slim
