@@ -103,6 +103,7 @@ services:
     depends_on:
       - postgres
   spark-analytics:
+    container_name: recipe-spark-analytics
     image: apache/spark:3.5.7
     working_dir: /app
     env_file:

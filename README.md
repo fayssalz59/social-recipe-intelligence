@@ -143,7 +143,7 @@ python run_dbt.py run
 Run the Spark job from Docker:
 
 ```bash
-docker exec docker-spark-analytics-1 bash -c "/opt/spark/bin/spark-submit --conf spark.jars.ivy=/tmp/.ivy2 --packages net.snowflake:snowflake-jdbc:3.15.1,net.snowflake:spark-snowflake_2.12:2.16.0-spark_3.4 /app/scripts/spark_recipe_analytics.py"
+docker exec recipe-spark-analytics bash -c "/opt/spark/bin/spark-submit --conf spark.jars.ivy=/tmp/.ivy2 --packages net.snowflake:snowflake-jdbc:3.15.1,net.snowflake:spark-snowflake_2.12:2.16.0-spark_3.4 /app/scripts/spark_recipe_analytics.py"
 ```
 
 ## API

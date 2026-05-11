@@ -38,7 +38,7 @@ def tiktok_analytics_pipeline():
     spark_analytics_task = BashOperator(
         task_id="spark_analytics_task",
         bash_command=(
-            'docker exec docker-spark-analytics-1 '
+            'docker exec recipe-spark-analytics '
             'bash -c "python3 -m pip install --no-cache-dir python-dotenv pyspark && '
             '/opt/spark/bin/spark-submit '
             '--conf spark.jars.ivy=/tmp/.ivy2 '
