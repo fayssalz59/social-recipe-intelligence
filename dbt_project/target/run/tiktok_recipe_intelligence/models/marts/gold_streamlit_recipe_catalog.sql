@@ -1,0 +1,20 @@
+
+  create or replace   view TIKTOK_PORTFOLIO_DB.GOLD.gold_streamlit_recipe_catalog
+  
+  
+  
+  
+  as (
+    select
+    raw_id,
+    display_title,
+    url_tiktok,
+    recipe_language,
+    is_vegetarian,
+    cuisine_style,
+    main_ingredient,
+    processing_confidence,
+    processed_at
+from TIKTOK_PORTFOLIO_DB.GOLD.gold_tiktok_recipe_catalog
+  );
+

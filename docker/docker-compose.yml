@@ -1,0 +1,165 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.11.0-python3.12
+  env_file:
+    - ../.env
+    - ./airflow.env
+  environment:
+    PYTHONPATH: /opt/airflow
+  volumes:
+    - ..:/opt/airflow
+    - /var/run/docker.sock:/var/run/docker.sock
+  networks:
+    - data-network
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    networks:
+      - data-network
+
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+      pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt &&
+      airflow db migrate &&
+      airflow users create --username $${_AIRFLOW_WWW_USER_USERNAME} --password $${_AIRFLOW_WWW_USER_PASSWORD} --firstname Airflow --lastname Admin --role Admin --email admin@example.com
+      "
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: >
+      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow webserver"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: >
+      bash -c "pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow scheduler"
+
+  streamlit:
+    image: python:3.11-slim
+    working_dir: /app
+    command: >
+      bash -c "pip install --no-cache-dir -r requirements.txt && streamlit run app/streamlit_app.py --server.port=8501 --server.address=0.0.0.0"
+    env_file:
+      - ../.env
+    volumes:
+      - ..:/app
+    ports:
+      - "8501:8501"
+    networks:
+      - data-network
+  portainer:
+    image: portainer/portainer-ce:2.39.0
+    container_name: portainer
+    command: -H unix:///var/run/docker.sock
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    restart: unless-stopped
+    networks:
+      - data-network
+  recipe-api:
+    container_name: recipe-api
+    image: python:3.11-slim
+    working_dir: /app
+    env_file:
+      - ../.env
+    command: >
+      bash -c "pip install --no-cache-dir -r requirements.txt &&
+      uvicorn api.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - ..:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - data-network
+    depends_on:
+      - postgres
+  spark-analytics:
+    image: apache/spark:3.5.7
+    working_dir: /app
+    env_file:
+      - ../.env
+    environment:
+      HOME: /tmp
+      IVY_HOME: /tmp/.ivy2
+    volumes:
+      - ..:/app
+    command: >
+      bash -c "mkdir -p /tmp/.ivy2 && tail -f /dev/null"
+    networks:
+      - data-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.8
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - data-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.8
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    networks:
+      - data-network
+  tiktok-monitor:
+    build:
+      context: ..
+      dockerfile: docker/tiktok-monitor/Dockerfile
+    env_file:
+      - ../.env
+    volumes:
+      - ..:/app
+    networks:
+      - data-network
+    depends_on:
+      - kafka
+      - postgres
+
+networks:
+  data-network:
+    driver: bridge
+
+volumes:
+  postgres-db-volume:
+  portainer-data:

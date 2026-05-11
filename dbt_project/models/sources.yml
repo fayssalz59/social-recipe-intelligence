@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: silver
+    database: "{{ env_var('SNOWFLAKE_DB') }}"
+    schema: "{{ env_var('SNOWFLAKE_SCHEMA_SILVER', 'SILVER') }}"
+    tables:
+      - name: SILVER_TIKTOK_RECIPES
