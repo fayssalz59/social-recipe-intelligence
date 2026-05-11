@@ -207,6 +207,7 @@ The `docs/` folder includes two English portfolio pages:
 ## Known Limitations
 
 - Airflow, API, and Streamlit currently install Python dependencies at container startup. This works for a portfolio demo but should become custom Docker images for a cleaner production story.
+- API and Streamlit use slim runtime requirement files (`requirements-api.txt` and `requirements-streamlit.txt`) so they do not install the full development stack.
 - The Spark container is kept alive and triggered with `docker exec`. This is pragmatic locally, but a dedicated Spark image or Spark-on-Kubernetes style runner would be cleaner.
 - TikTok scraping is inherently unstable because sessions, bot detection, `msToken`, browser mode, and Playwright behavior change over time.
 - The Snowflake DDL is intended for first-time setup. Do not run `CREATE OR REPLACE TABLE` against valuable existing data without backing it up.
