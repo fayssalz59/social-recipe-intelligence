@@ -49,7 +49,7 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: >
-      bash -c "mkdir -p /opt/airflow/logs /opt/airflow/plugins && rm -f /tmp/airflow-webserver.pid && pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow webserver"
+      bash -c "mkdir -p /opt/airflow/logs /opt/airflow/plugins && rm -f /tmp/airflow-webserver.pid && pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow webserver --pid /tmp/airflow-webserver.pid"
     ports:
       - "127.0.0.1:18080:8080"
     healthcheck:
