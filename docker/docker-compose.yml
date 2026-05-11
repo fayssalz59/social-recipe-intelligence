@@ -8,6 +8,8 @@ x-airflow-common: &airflow-common
     PYTHONPATH: /opt/airflow
   volumes:
     - ..:/opt/airflow
+    - airflow-logs:/opt/airflow/logs
+    - airflow-plugins:/opt/airflow/plugins
     - /var/run/docker.sock:/var/run/docker.sock
   networks:
     - data-network
@@ -164,3 +166,5 @@ networks:
 volumes:
   postgres-db-volume:
   portainer-data:
+  airflow-logs:
+  airflow-plugins:
