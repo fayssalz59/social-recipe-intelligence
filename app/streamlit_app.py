@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 import pandas as pd
+import snowflake.connector
 import streamlit as st
 
 st.set_page_config(page_title="TikTok Recipe Intelligence", layout="wide")
@@ -21,6 +22,30 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [column.upper() for column in df.columns]
     return df
+
+
+def query_snowflake(query: str) -> pd.DataFrame:
+    required = {
+        "SNOWFLAKE_USER": os.getenv("SNOWFLAKE_USER"),
+        "SNOWFLAKE_PASSWORD": os.getenv("SNOWFLAKE_PASSWORD"),
+        "SNOWFLAKE_ACCOUNT": os.getenv("SNOWFLAKE_ACCOUNT"),
+        "SNOWFLAKE_WAREHOUSE": os.getenv("SNOWFLAKE_WAREHOUSE"),
+        "SNOWFLAKE_DB": os.getenv("SNOWFLAKE_DB"),
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise ValueError(f"Missing Snowflake environment variables: {', '.join(missing)}")
+
+    with snowflake.connector.connect(
+        user=required["SNOWFLAKE_USER"],
+        password=required["SNOWFLAKE_PASSWORD"],
+        account=required["SNOWFLAKE_ACCOUNT"],
+        warehouse=required["SNOWFLAKE_WAREHOUSE"],
+        database=required["SNOWFLAKE_DB"],
+        schema=os.getenv("SNOWFLAKE_SCHEMA_GOLD", "GOLD"),
+        role=os.getenv("SNOWFLAKE_ROLE"),
+    ) as conn:
+        return normalize_columns(pd.read_sql(query, conn))
 
 
 def safe_scalar(value: Any, fallback: str = "unknown") -> str:
@@ -104,7 +129,6 @@ def inject_styles() -> None:
 
 @st.cache_data(ttl=300)
 def load_catalog() -> pd.DataFrame:
-    conn = st.connection("snowflake")
     query = f"""
     SELECT
         RAW_ID,
@@ -120,21 +144,19 @@ def load_catalog() -> pd.DataFrame:
     FROM {gold_table_name("GOLD_STREAMLIT_RECIPE_CATALOG")}
     ORDER BY PROCESSED_AT DESC
     """
-    return normalize_columns(conn.query(query, ttl=300))
+    return query_snowflake(query)
 
 
 @st.cache_data(ttl=300)
 def load_optional_table(table: str) -> pd.DataFrame:
-    conn = st.connection("snowflake")
     try:
-        return normalize_columns(conn.query(f"SELECT * FROM {gold_table_name(table)}", ttl=300))
+        return query_snowflake(f"SELECT * FROM {gold_table_name(table)}")
     except Exception:
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_layer_counts() -> pd.DataFrame:
-    conn = st.connection("snowflake")
     database = os.getenv("SNOWFLAKE_DB", "TIKTOK_PORTFOLIO_DB")
     bronze = os.getenv("SNOWFLAKE_SCHEMA_BRONZE", "BRONZE")
     silver = os.getenv("SNOWFLAKE_SCHEMA_SILVER", "SILVER")
@@ -150,7 +172,7 @@ def load_layer_counts() -> pd.DataFrame:
     FROM {database}.{gold}.GOLD_STREAMLIT_RECIPE_CATALOG
     """
     try:
-        return normalize_columns(conn.query(query, ttl=300))
+        return query_snowflake(query)
     except Exception:
         return pd.DataFrame()
 
