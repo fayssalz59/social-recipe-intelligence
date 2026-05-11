@@ -121,6 +121,131 @@ def inject_styles() -> None:
             color: #627d98;
             font-size: 0.9rem;
         }
+        .hero {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 8px;
+            padding: 30px 34px;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+            margin-bottom: 18px;
+        }
+        .hero-kicker {
+            color: #486174;
+            font-size: 0.84rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 10px;
+        }
+        .hero-title {
+            color: #102a43;
+            font-size: 2.55rem;
+            line-height: 1.08;
+            font-weight: 800;
+            margin-bottom: 12px;
+        }
+        .hero-copy {
+            color: #334e68;
+            font-size: 1.05rem;
+            line-height: 1.65;
+            max-width: 940px;
+        }
+        .section-card {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 8px;
+            padding: 18px 20px;
+            min-height: 150px;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+        }
+        .section-card-title {
+            color: #102a43;
+            font-weight: 800;
+            font-size: 1.02rem;
+            margin-bottom: 8px;
+        }
+        .section-card-copy {
+            color: #486174;
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
+        .pipeline-step {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 8px;
+            padding: 13px 14px;
+            color: #243b53;
+            min-height: 92px;
+        }
+        .pipeline-step strong {
+            color: #102a43;
+            display: block;
+            margin-bottom: 4px;
+        }
+        .search-shell {
+            background: #ffffff;
+            border: 1px solid #d9e2ec;
+            border-radius: 8px;
+            padding: 24px 26px;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+            margin-bottom: 18px;
+        }
+        .search-title {
+            color: #102a43;
+            font-size: 2.2rem;
+            line-height: 1.12;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        .search-subtitle {
+            color: #486174;
+            font-size: 1rem;
+            line-height: 1.55;
+            margin-bottom: 2px;
+        }
+        .result-title {
+            color: #102a43;
+            font-size: 1.12rem;
+            line-height: 1.35;
+            font-weight: 800;
+            margin-bottom: 5px;
+        }
+        .result-url {
+            color: #2f80ed;
+            font-size: 0.82rem;
+            overflow-wrap: anywhere;
+            margin-bottom: 10px;
+        }
+        .result-meta {
+            color: #486174;
+            font-size: 0.88rem;
+            line-height: 1.55;
+            margin-top: 8px;
+        }
+        .result-count {
+            color: #486174;
+            font-size: 0.92rem;
+            margin-bottom: 10px;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.result-title) {
+            border-color: #c9d8e8;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.result-title):hover {
+            border-color: #8fb4d8;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+        }
+        .search-shell + div [data-testid="stTextInput"] input {
+            border-radius: 8px;
+            border-color: #9fb3c8;
+            min-height: 48px;
+            font-size: 1rem;
+        }
+        div[data-testid="stButton"] button,
+        div[data-testid="stLinkButton"] a {
+            border-radius: 8px;
+            font-weight: 700;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -178,7 +303,7 @@ def load_layer_counts() -> pd.DataFrame:
 
 
 def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
-    st.sidebar.header("Filters")
+    st.sidebar.header("Catalog filters")
     search = st.sidebar.text_input("Search title, cuisine, ingredient", value="")
 
     language_options = sorted(df["RECIPE_LANGUAGE"].dropna().astype(str).unique().tolist())
@@ -238,6 +363,18 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     return filtered
 
 
+def render_sidebar_navigation() -> str:
+    st.sidebar.title("Recipe Intelligence")
+    st.sidebar.caption("Snowflake-backed recipe analytics platform")
+    page = st.sidebar.radio(
+        "Navigation",
+        options=["Search", "Analytics", "Catalog", "Data quality", "Platform"],
+        index=0,
+    )
+    st.sidebar.divider()
+    return page
+
+
 def value_counts(df: pd.DataFrame, column: str, top_n: int = 12) -> pd.DataFrame:
     if df.empty or column not in df:
         return pd.DataFrame(columns=[column, "RECIPE_COUNT"])
@@ -270,7 +407,268 @@ def render_metrics(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
     metric_5.metric("Cuisine / ingredient spread", f"{distinct_cuisines} / {distinct_ingredients}")
 
 
-def render_overview(filtered: pd.DataFrame) -> None:
+def render_home(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
+    st.markdown(
+        """
+        <div class="hero">
+            <div class="hero-kicker">Portfolio data platform</div>
+            <div class="hero-title">TikTok Recipe Intelligence</div>
+            <div class="hero-copy">
+                An end-to-end data engineering project that turns unstructured social recipe content into
+                curated, searchable, and analytics-ready data. The platform combines ingestion, Snowflake
+                medallion modeling, LLM enrichment, dbt serving views, Spark analytics, Airflow orchestration,
+                a FastAPI service, and this Streamlit data product.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    render_metrics(df, filtered)
+
+    st.subheader("Explore the app")
+    card_1, card_2, card_3 = st.columns(3)
+    with card_1:
+        st.markdown(
+            """
+            <div class="section-card">
+              <div class="section-card-title">Analytics</div>
+              <div class="section-card-copy">
+                Inspect cuisine, ingredient, language, model, confidence, and Spark aggregate outputs.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with card_2:
+        st.markdown(
+            """
+            <div class="section-card">
+              <div class="section-card-title">Catalog</div>
+              <div class="section-card-copy">
+                Browse enriched recipe records, open TikTok sources, and filter by semantic metadata.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with card_3:
+        st.markdown(
+            """
+            <div class="section-card">
+              <div class="section-card-title">Data Quality</div>
+              <div class="section-card-copy">
+                Review unknown fields, missing values, low-confidence records, and warehouse layer counts.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.subheader("Pipeline shape")
+    step_1, step_2, step_3, step_4, step_5 = st.columns(5)
+    steps = [
+        ("Bronze", "Raw TikTok or CSV records land in Snowflake with source metadata."),
+        ("Silver", "OpenRouter enriches recipe text into validated structured fields."),
+        ("Gold", "dbt creates curated serving views for API and dashboard consumers."),
+        ("Spark", "Batch analytics are written back to Snowflake aggregate tables."),
+        ("Products", "FastAPI and Streamlit expose the curated recipe intelligence layer."),
+    ]
+    for column, (title, copy) in zip([step_1, step_2, step_3, step_4, step_5], steps):
+        with column:
+            st.markdown(
+                f"""
+                <div class="pipeline-step">
+                    <strong>{title}</strong>
+                    {copy}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.subheader("Latest enriched recipes")
+    latest_columns = [
+        "DISPLAY_TITLE",
+        "CUISINE_STYLE",
+        "MAIN_INGREDIENT",
+        "RECIPE_LANGUAGE",
+        "PROCESSING_CONFIDENCE",
+        "PROCESSED_AT",
+    ]
+    st.dataframe(
+        filtered.sort_values("PROCESSED_AT", ascending=False)[latest_columns].head(8),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def filter_for_search(
+    df: pd.DataFrame,
+    query: str,
+    languages: list[str],
+    cuisines: list[str],
+    ingredients: list[str],
+    dietary_mode: str,
+    min_confidence: float,
+) -> pd.DataFrame:
+    filtered = df.copy()
+
+    if languages:
+        filtered = filtered[filtered["RECIPE_LANGUAGE"].astype(str).isin(languages)]
+    if cuisines:
+        filtered = filtered[filtered["CUISINE_STYLE"].astype(str).isin(cuisines)]
+    if ingredients:
+        filtered = filtered[filtered["MAIN_INGREDIENT"].astype(str).isin(ingredients)]
+
+    filtered = filtered[filtered["PROCESSING_CONFIDENCE"].fillna(0) >= min_confidence]
+
+    if dietary_mode == "Vegetarian":
+        filtered = filtered[filtered["IS_VEGETARIAN"].fillna(False) == True]  # noqa: E712
+    elif dietary_mode == "Non-vegetarian":
+        filtered = filtered[filtered["IS_VEGETARIAN"].fillna(False) == False]  # noqa: E712
+
+    if query.strip():
+        pattern = query.strip().lower()
+        searchable = (
+            filtered["DISPLAY_TITLE"].fillna("").astype(str)
+            + " "
+            + filtered["CUISINE_STYLE"].fillna("").astype(str)
+            + " "
+            + filtered["MAIN_INGREDIENT"].fillna("").astype(str)
+            + " "
+            + filtered["RECIPE_LANGUAGE"].fillna("").astype(str)
+        ).str.lower()
+        filtered = filtered[searchable.str.contains(pattern, regex=False)]
+
+    return filtered
+
+
+def render_result_card(row: pd.Series) -> None:
+    cuisine = safe_scalar(row.get("CUISINE_STYLE"))
+    ingredient = safe_scalar(row.get("MAIN_INGREDIENT"))
+    language = safe_scalar(row.get("RECIPE_LANGUAGE"))
+    title = safe_scalar(row.get("DISPLAY_TITLE"), "Untitled recipe")
+    url = safe_scalar(row.get("URL_TIKTOK"), "#")
+    confidence = row.get("PROCESSING_CONFIDENCE", 0)
+    model = safe_scalar(row.get("MODEL_NAME"))
+    dietary = "Vegetarian" if is_true(row.get("IS_VEGETARIAN")) else "Non-vegetarian"
+
+    with st.container(border=True):
+        body_col, action_col = st.columns([5.6, 1.1])
+        with body_col:
+            st.markdown(f"<div class='result-title'>{title}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='result-url'>{url}</div>", unsafe_allow_html=True)
+            st.markdown(
+                "".join(
+                    [
+                        f"<span class='pill'>{cuisine}</span>",
+                        f"<span class='pill'>{ingredient}</span>",
+                        f"<span class='pill'>{language}</span>",
+                        f"<span class='pill'>{dietary}</span>",
+                    ]
+                ),
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "<div class='result-meta'>"
+                f"Confidence {confidence:.2f} | Model {model} | Processed {safe_scalar(row.get('PROCESSED_AT'))}"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        with action_col:
+            if url.startswith("http"):
+                st.link_button("Open", url, use_container_width=True)
+            else:
+                st.button("Open", disabled=True, use_container_width=True)
+
+
+def render_search_browser(df: pd.DataFrame) -> None:
+    st.markdown(
+        """
+        <div class="search-shell">
+            <div class="search-title">Find enriched recipe videos</div>
+            <div class="search-subtitle">
+                Search the Gold recipe catalog by title, cuisine, ingredient, language, dietary signal,
+                and enrichment confidence. Each result links back to the original TikTok source.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    search_query = st.text_input(
+        "Search recipes",
+        placeholder="Try pasta, chicken, mexican, vegetarian, french...",
+        label_visibility="collapsed",
+    )
+
+    filter_col_1, filter_col_2, filter_col_3, filter_col_4 = st.columns([1.2, 1.2, 1.4, 1.0])
+    language_options = sorted(df["RECIPE_LANGUAGE"].dropna().astype(str).unique().tolist())
+    cuisine_options = sorted(df["CUISINE_STYLE"].dropna().astype(str).unique().tolist())
+    ingredient_options = sorted(df["MAIN_INGREDIENT"].dropna().astype(str).unique().tolist())
+
+    with filter_col_1:
+        selected_languages = st.multiselect("Language", language_options, default=language_options)
+    with filter_col_2:
+        selected_cuisines = st.multiselect("Cuisine", cuisine_options, default=[])
+    with filter_col_3:
+        selected_ingredients = st.multiselect("Ingredient", ingredient_options, default=[])
+    with filter_col_4:
+        dietary_mode = st.selectbox("Dietary", ["All", "Vegetarian", "Non-vegetarian"])
+
+    control_col_1, control_col_2, control_col_3 = st.columns([1.1, 1.2, 1.0])
+    with control_col_1:
+        min_confidence = st.slider("Minimum confidence", 0.0, 1.0, 0.0, 0.05)
+    with control_col_2:
+        sort_mode = st.selectbox("Sort by", ["Newest", "Highest confidence", "Lowest confidence", "Title A-Z"])
+    with control_col_3:
+        result_limit = st.selectbox("Results", [12, 24, 48, 96], index=1)
+
+    results = filter_for_search(
+        df,
+        query=search_query,
+        languages=selected_languages,
+        cuisines=selected_cuisines,
+        ingredients=selected_ingredients,
+        dietary_mode=dietary_mode,
+        min_confidence=min_confidence,
+    )
+
+    if sort_mode == "Highest confidence":
+        results = results.sort_values("PROCESSING_CONFIDENCE", ascending=False)
+    elif sort_mode == "Lowest confidence":
+        results = results.sort_values("PROCESSING_CONFIDENCE", ascending=True)
+    elif sort_mode == "Title A-Z":
+        results = results.sort_values("DISPLAY_TITLE", ascending=True)
+    else:
+        results = results.sort_values("PROCESSED_AT", ascending=False)
+
+    metric_col_1, metric_col_2, metric_col_3, metric_col_4 = st.columns(4)
+    metric_col_1.metric("Matching recipes", f"{len(results):,}")
+    metric_col_2.metric("Cuisines", f"{results['CUISINE_STYLE'].nunique() if not results.empty else 0}")
+    metric_col_3.metric("Ingredients", f"{results['MAIN_INGREDIENT'].nunique() if not results.empty else 0}")
+    metric_col_4.metric(
+        "Avg confidence",
+        f"{results['PROCESSING_CONFIDENCE'].mean():.2f}" if not results.empty else "0.00",
+    )
+
+    st.markdown(
+        f"<div class='result-count'>Showing {min(len(results), result_limit)} of {len(results)} matching recipes</div>",
+        unsafe_allow_html=True,
+    )
+
+    if results.empty:
+        st.info("No recipes match the current search and filters.")
+        return
+
+    for _, row in results.head(result_limit).iterrows():
+        render_result_card(row)
+
+
+def render_analytics(filtered: pd.DataFrame) -> None:
+    st.title("Analytics")
+    st.caption("Explore the enriched recipe catalog and Spark-generated aggregate tables.")
+
     chart_col_1, chart_col_2 = st.columns(2)
     with chart_col_1:
         st.subheader("Top cuisines")
@@ -293,9 +691,36 @@ def render_overview(filtered: pd.DataFrame) -> None:
         model_counts = value_counts(filtered, "MODEL_NAME", top_n=8)
         st.bar_chart(model_counts, x="MODEL_NAME", y="RECIPE_COUNT", use_container_width=True)
 
+    confidence_col, vegetarian_col = st.columns(2)
+    with confidence_col:
+        st.subheader("Confidence distribution")
+        confidence_buckets = filtered.copy()
+        confidence_buckets["CONFIDENCE_BUCKET"] = pd.cut(
+            confidence_buckets["PROCESSING_CONFIDENCE"].fillna(0),
+            bins=[0, 0.5, 0.75, 0.9, 1.0],
+            labels=["0-0.50", "0.50-0.75", "0.75-0.90", "0.90-1.00"],
+            include_lowest=True,
+        )
+        confidence_counts = value_counts(confidence_buckets, "CONFIDENCE_BUCKET", top_n=10)
+        st.bar_chart(confidence_counts, x="CONFIDENCE_BUCKET", y="RECIPE_COUNT", use_container_width=True)
+
+    with vegetarian_col:
+        st.subheader("Dietary split")
+        dietary_df = filtered.copy()
+        dietary_df["DIETARY_CLASS"] = dietary_df["IS_VEGETARIAN"].fillna(False).map(
+            {True: "Vegetarian", False: "Non-vegetarian"}
+        )
+        dietary_counts = value_counts(dietary_df, "DIETARY_CLASS", top_n=5)
+        st.bar_chart(dietary_counts, x="DIETARY_CLASS", y="RECIPE_COUNT", use_container_width=True)
+
+    st.divider()
+    st.title("Spark analytics")
+    render_spark_analytics()
+
 
 def render_catalog(filtered: pd.DataFrame) -> None:
-    st.subheader("Recipe catalog")
+    st.title("Recipe catalog")
+    st.caption("Browse the curated Gold catalog generated from enriched Silver recipe records.")
 
     sort_mode = st.radio(
         "Sort",
@@ -380,6 +805,9 @@ def render_spark_analytics() -> None:
 
 
 def render_quality(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
+    st.title("Data quality")
+    st.caption("Monitor enrichment completeness, confidence, and warehouse layer health.")
+
     layer_counts = load_layer_counts()
     if not layer_counts.empty:
         st.subheader("Warehouse layer counts")
@@ -421,11 +849,38 @@ def render_quality(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
     )
 
 
+def render_platform() -> None:
+    st.title("Platform")
+    st.caption("Operational map of the services behind this portfolio data product.")
+
+    service_rows = [
+        {"LAYER": "Warehouse", "TECH": "Snowflake", "ROLE": "Bronze, Silver, Gold analytical storage"},
+        {"LAYER": "Events", "TECH": "Kafka", "ROLE": "New recipe content detection events"},
+        {"LAYER": "Orchestration", "TECH": "Airflow", "ROLE": "Pipeline scheduling and job dependency management"},
+        {"LAYER": "Transformation", "TECH": "dbt", "ROLE": "Gold serving views for API and dashboard consumers"},
+        {"LAYER": "Batch analytics", "TECH": "PySpark", "ROLE": "Aggregate analytics tables by cuisine, ingredient, language, and model"},
+        {"LAYER": "Enrichment", "TECH": "OpenRouter / LLM", "ROLE": "Semantic extraction from recipe descriptions"},
+        {"LAYER": "Serving", "TECH": "FastAPI", "ROLE": "HTTP API over curated recipe data"},
+        {"LAYER": "Dashboard", "TECH": "Streamlit", "ROLE": "Interactive analytics and quality review app"},
+        {"LAYER": "Deployment", "TECH": "Docker + Nginx", "ROLE": "Local service composition and reverse proxy deployment"},
+    ]
+    st.dataframe(pd.DataFrame(service_rows), use_container_width=True, hide_index=True)
+
+    st.subheader("Useful local endpoints")
+    endpoints = pd.DataFrame(
+        [
+            {"SERVICE": "Streamlit", "LOCAL_URL": "http://127.0.0.1:18501"},
+            {"SERVICE": "FastAPI docs", "LOCAL_URL": "http://127.0.0.1:18000/docs"},
+            {"SERVICE": "Airflow", "LOCAL_URL": "http://127.0.0.1:18080"},
+            {"SERVICE": "Portainer", "LOCAL_URL": "http://127.0.0.1:19000"},
+        ]
+    )
+    st.dataframe(endpoints, use_container_width=True, hide_index=True)
+
+
 def main() -> None:
     inject_styles()
-
-    st.title("TikTok Recipe Intelligence")
-    st.caption("Recipe content analytics powered by Snowflake, OpenRouter, dbt, Spark, Airflow, FastAPI, and Streamlit.")
+    page = render_sidebar_navigation()
 
     try:
         df = load_catalog()
@@ -442,20 +897,20 @@ def main() -> None:
     df["PROCESSING_CONFIDENCE"] = pd.to_numeric(df["PROCESSING_CONFIDENCE"], errors="coerce")
     df["MODEL_NAME"] = df.get("MODEL_NAME", pd.Series(["unknown"] * len(df))).fillna("unknown")
 
-    filtered = apply_filters(df)
-    render_metrics(df, filtered)
+    if page == "Search":
+        render_search_browser(df)
+        return
 
-    overview_tab, catalog_tab, spark_tab, quality_tab = st.tabs(
-        ["Overview", "Catalog", "Spark analytics", "Data quality"]
-    )
-    with overview_tab:
-        render_overview(filtered)
-    with catalog_tab:
+    filtered = apply_filters(df)
+
+    if page == "Analytics":
+        render_analytics(filtered)
+    elif page == "Catalog":
         render_catalog(filtered)
-    with spark_tab:
-        render_spark_analytics()
-    with quality_tab:
+    elif page == "Data quality":
         render_quality(df, filtered)
+    else:
+        render_platform()
 
 
 if __name__ == "__main__":
