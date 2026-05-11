@@ -34,9 +34,12 @@ services:
 
   airflow-init:
     <<: *airflow-common
+    user: "0:0"
+    entrypoint: /bin/bash
     command: >
-      bash -c "
+      -c "
       mkdir -p /opt/airflow/logs /opt/airflow/plugins &&
+      chown -R $${AIRFLOW_UID:-50000}:0 /opt/airflow/logs /opt/airflow/plugins &&
       pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt &&
       airflow db migrate &&
       airflow users create --username $${_AIRFLOW_WWW_USER_USERNAME} --password $${_AIRFLOW_WWW_USER_PASSWORD} --firstname Airflow --lastname Admin --role Admin --email admin@example.com || true
