@@ -127,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--comment-count", type=int, default=40, help="TikTok comments to inspect per video.")
     parser.add_argument("--frame-count", type=int, default=6, help="Frames to sample for OCR.")
     parser.add_argument("--whisper-model", default="tiny", help="faster-whisper model name for local ASR.")
-    parser.add_argument("--ocr-engine", choices=["easyocr", "tesseract", "auto"], default="auto")
+    parser.add_argument("--ocr-engine", choices=["easyocr", "tesseract", "auto"], default="tesseract")
     parser.add_argument("--dry-run", action="store_true", help="Log recoveries without writing Snowflake.")
     parser.add_argument("--force-retry", action="store_true", help="Retry methods even if they failed recently.")
     parser.add_argument("--retry-failed-after-hours", type=int, default=24, help="Skip failed/empty methods retried within this window.")

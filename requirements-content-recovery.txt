@@ -6,8 +6,6 @@ playwright
 beautifulsoup4==4.14.2
 yt-dlp
 faster-whisper
-easyocr
 pytesseract
 Pillow
-opencv-python-headless
 tqdm>=4.66,<5.0

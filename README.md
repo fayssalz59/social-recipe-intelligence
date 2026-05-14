@@ -182,7 +182,7 @@ Targeted methods are still available:
 
 ```bash
 docker compose --profile recovery run --rm recipe-content-recovery python -u -m scripts.recover_recipe_content --method audio_transcript --limit 10 --whisper-model tiny
-docker compose --profile recovery run --rm recipe-content-recovery python -u -m scripts.recover_recipe_content --method ocr --limit 10 --frame-count 6 --ocr-engine auto
+docker compose --profile recovery run --rm recipe-content-recovery python -u -m scripts.recover_recipe_content --method ocr --limit 10 --frame-count 6 --ocr-engine tesseract
 docker compose --profile recovery run --rm recipe-content-recovery python -u -m scripts.recover_recipe_content --method adaptive --limit 10 --enable-comments
 ```
 
