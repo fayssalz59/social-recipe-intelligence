@@ -629,31 +629,37 @@ def refresh_creator_quality_scores() -> None:
             WHERE COALESCE(CREATOR_USERNAME, '') <> ''
             GROUP BY LOWER(CREATOR_USERNAME)
         ),
-        gold AS (
+        silver AS (
             SELECT
                 LOWER(b.CREATOR_USERNAME) AS CREATOR_USERNAME,
-                COUNT_IF(g.IS_RECIPE) AS RECIPES_EXTRACTED,
-                COUNT_IF(g.RECIPE_STATUS = 'full_recipe') AS FULL_RECIPES,
-                AVG(g.RECIPE_QUALITY_SCORE) AS AVG_QUALITY_SCORE
+                COUNT_IF(s.IS_RECIPE) AS RECIPES_EXTRACTED,
+                COUNT_IF(s.RECIPE_STATUS = 'full_recipe') AS FULL_RECIPES,
+                AVG(
+                    GREATEST(
+                        COALESCE(s.FINAL_RECIPE_CONFIDENCE, 0),
+                        COALESCE(s.CAPTION_COMPLETENESS_SCORE, 0),
+                        COALESCE(s.PROCESSING_CONFIDENCE, 0)
+                    )
+                ) AS AVG_QUALITY_SCORE
             FROM {BRONZE_SCHEMA}.BRONZE_TIKTOK_RECIPES b
-            LEFT JOIN {GOLD_SCHEMA}.GOLD_TIKTOK_RECIPE_CATALOG g
-                ON b.RAW_ID = g.RAW_ID
+            LEFT JOIN {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES s
+                ON b.RAW_ID = s.RAW_ID
             WHERE COALESCE(b.CREATOR_USERNAME, '') <> ''
             GROUP BY LOWER(b.CREATOR_USERNAME)
         )
         SELECT
             bronze.CREATOR_USERNAME,
             bronze.VIDEOS_SCANNED,
-            COALESCE(gold.RECIPES_EXTRACTED, 0) AS VIDEOS_ACCEPTED,
-            COALESCE(gold.RECIPES_EXTRACTED, 0) AS RECIPES_EXTRACTED,
-            COALESCE(gold.FULL_RECIPES, 0) AS FULL_RECIPES,
-            COALESCE(gold.AVG_QUALITY_SCORE, 0) AS AVG_QUALITY_SCORE,
-            COALESCE(gold.FULL_RECIPES, 0) / NULLIF(bronze.VIDEOS_SCANNED, 0) AS YIELD_RATE,
+            COALESCE(silver.RECIPES_EXTRACTED, 0) AS VIDEOS_ACCEPTED,
+            COALESCE(silver.RECIPES_EXTRACTED, 0) AS RECIPES_EXTRACTED,
+            COALESCE(silver.FULL_RECIPES, 0) AS FULL_RECIPES,
+            COALESCE(silver.AVG_QUALITY_SCORE, 0) AS AVG_QUALITY_SCORE,
+            COALESCE(silver.FULL_RECIPES, 0) / NULLIF(bronze.VIDEOS_SCANNED, 0) AS YIELD_RATE,
             bronze.LAST_SCANNED_AT,
-            IFF(COALESCE(gold.FULL_RECIPES, 0) / NULLIF(bronze.VIDEOS_SCANNED, 0) >= 0.25, 'high_yield', 'active') AS STATUS
+            IFF(COALESCE(silver.FULL_RECIPES, 0) / NULLIF(bronze.VIDEOS_SCANNED, 0) >= 0.25, 'high_yield', 'active') AS STATUS
         FROM bronze
-        LEFT JOIN gold
-            ON bronze.CREATOR_USERNAME = gold.CREATOR_USERNAME
+        LEFT JOIN silver
+            ON bronze.CREATOR_USERNAME = silver.CREATOR_USERNAME
     ) AS source
     ON target.CREATOR_USERNAME = source.CREATOR_USERNAME
     WHEN MATCHED THEN UPDATE SET
