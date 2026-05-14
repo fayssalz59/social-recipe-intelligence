@@ -194,28 +194,32 @@ def copy_stage_to_load_table(
 def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
     LOGGER.info("Merging load table into bronze target %s", bronze_table)
 
+    # Important:
+    # Snowflake MERGE fails if multiple source rows match the same target row.
+    # This can happen even after basic CONTENT_ID deduplication when one row has
+    # CONTENT_ID filled and another row has the same TikTok video only in URL_TIKTOK.
+    # We therefore normalize both source and target around a single CONTENT_KEY:
+    # 1. CONTENT_ID when present
+    # 2. video id extracted from URL_TIKTOK
+    # 3. URL_TIKTOK as final fallback
     duplicate_check_sql = f"""
     WITH normalized AS (
         SELECT
-            CASE
-                WHEN NULLIF(TRIM(CONTENT_ID), '') IS NOT NULL THEN
-                    COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
-                    || '|content_id|'
-                    || NULLIF(TRIM(CONTENT_ID), '')
-                ELSE
-                    COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
-                    || '|url|'
-                    || NULLIF(TRIM(URL_TIKTOK), '')
-            END AS BUSINESS_KEY
+            COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok') AS PLATFORM,
+            COALESCE(
+                NULLIF(TRIM(CONTENT_ID), ''),
+                NULLIF(REGEXP_SUBSTR(URL_TIKTOK, '/video/([0-9]+)', 1, 1, 'e', 1), ''),
+                NULLIF(TRIM(URL_TIKTOK), '')
+            ) AS CONTENT_KEY
         FROM {load_table}
         WHERE URL_TIKTOK IS NOT NULL
     )
     SELECT COUNT(*) AS DUPLICATE_BUSINESS_KEYS
     FROM (
-        SELECT BUSINESS_KEY
+        SELECT PLATFORM, CONTENT_KEY
         FROM normalized
-        WHERE BUSINESS_KEY IS NOT NULL
-        GROUP BY BUSINESS_KEY
+        WHERE CONTENT_KEY IS NOT NULL
+        GROUP BY PLATFORM, CONTENT_KEY
         HAVING COUNT(*) > 1
     );
     """
@@ -234,7 +238,12 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
         WITH normalized_source AS (
             SELECT
                 COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok') AS PLATFORM,
-                NULLIF(TRIM(CONTENT_ID), '') AS CONTENT_ID,
+
+                COALESCE(
+                    NULLIF(TRIM(CONTENT_ID), ''),
+                    NULLIF(REGEXP_SUBSTR(URL_TIKTOK, '/video/([0-9]+)', 1, 1, 'e', 1), '')
+                ) AS CONTENT_ID,
+
                 NULLIF(TRIM(CREATOR_USERNAME), '') AS CREATOR_USERNAME,
                 NULLIF(TRIM(TITLE), '') AS TITLE,
                 NULLIF(TRIM(DESCRIPTION), '') AS DESCRIPTION,
@@ -253,16 +262,13 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
                 DESCRIPTION_SOURCE,
                 DESCRIPTION_LENGTH,
                 DESCRIPTION_ENRICHED,
-                CASE
-                    WHEN NULLIF(TRIM(CONTENT_ID), '') IS NOT NULL THEN
-                        COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
-                        || '|content_id|'
-                        || NULLIF(TRIM(CONTENT_ID), '')
-                    ELSE
-                        COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
-                        || '|url|'
-                        || NULLIF(TRIM(URL_TIKTOK), '')
-                END AS BUSINESS_KEY
+
+                COALESCE(
+                    NULLIF(TRIM(CONTENT_ID), ''),
+                    NULLIF(REGEXP_SUBSTR(URL_TIKTOK, '/video/([0-9]+)', 1, 1, 'e', 1), ''),
+                    NULLIF(TRIM(URL_TIKTOK), '')
+                ) AS CONTENT_KEY
+
             FROM {load_table}
             WHERE URL_TIKTOK IS NOT NULL
         ),
@@ -297,13 +303,14 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
                 ) AS RAW_PAYLOAD,
                 SHA2(
                     COALESCE(PLATFORM, 'tiktok') || '|' ||
+                    COALESCE(CONTENT_KEY, '') || '|' ||
                     COALESCE(DESCRIPTION, '') || '|' ||
                     COALESCE(TITLE, '') || '|' ||
                     COALESCE(URL_TIKTOK, ''),
                     256
                 ) AS RECORD_HASH,
                 ROW_NUMBER() OVER (
-                    PARTITION BY BUSINESS_KEY
+                    PARTITION BY PLATFORM, CONTENT_KEY
                     ORDER BY
                         LENGTH(COALESCE(EVIDENCE_TEXT, '')) DESC,
                         LENGTH(COALESCE(DESCRIPTION, '')) DESC,
@@ -311,7 +318,7 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
                         SOURCE_FILE DESC
                 ) AS ROW_NUM
             FROM normalized_source
-            WHERE BUSINESS_KEY IS NOT NULL
+            WHERE CONTENT_KEY IS NOT NULL
         )
 
         SELECT
@@ -329,17 +336,20 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
         WHERE ROW_NUM = 1
     ) AS src
     ON (
-        src.CONTENT_ID IS NOT NULL
-        AND tgt.CONTENT_ID = src.CONTENT_ID
-        AND COALESCE(tgt.PLATFORM, 'tiktok') = src.PLATFORM
-    )
-    OR (
-        src.CONTENT_ID IS NULL
-        AND tgt.URL_TIKTOK = src.URL_TIKTOK
+        COALESCE(tgt.PLATFORM, 'tiktok') = src.PLATFORM
+        AND COALESCE(
+            NULLIF(TRIM(tgt.CONTENT_ID), ''),
+            NULLIF(REGEXP_SUBSTR(tgt.URL_TIKTOK, '/video/([0-9]+)', 1, 1, 'e', 1), ''),
+            NULLIF(TRIM(tgt.URL_TIKTOK), '')
+        ) = COALESCE(
+            NULLIF(TRIM(src.CONTENT_ID), ''),
+            NULLIF(REGEXP_SUBSTR(src.URL_TIKTOK, '/video/([0-9]+)', 1, 1, 'e', 1), ''),
+            NULLIF(TRIM(src.URL_TIKTOK), '')
+        )
     )
     WHEN MATCHED THEN UPDATE SET
         PLATFORM = src.PLATFORM,
-        CONTENT_ID = COALESCE(tgt.CONTENT_ID, src.CONTENT_ID),
+        CONTENT_ID = COALESCE(NULLIF(tgt.CONTENT_ID, ''), src.CONTENT_ID),
         CREATOR_USERNAME = COALESCE(NULLIF(tgt.CREATOR_USERNAME, ''), src.CREATOR_USERNAME),
         TITLE = CASE
             WHEN LENGTH(COALESCE(src.TITLE, '')) > LENGTH(COALESCE(tgt.TITLE, '')) THEN src.TITLE
