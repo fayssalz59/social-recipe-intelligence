@@ -52,6 +52,9 @@ services:
       bash -c "mkdir -p /opt/airflow/logs /opt/airflow/plugins && rm -f /tmp/airflow-webserver.pid && pip install --no-cache-dir -r /opt/airflow/requirements-airflow.txt && airflow webserver --pid /tmp/airflow-webserver.pid"
     ports:
       - "127.0.0.1:18080:8080"
+    networks:
+      - data-network
+      - web
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 15s
@@ -76,6 +79,7 @@ services:
       - "127.0.0.1:18501:8501"
     networks:
       - data-network
+      - web
   portainer:
     image: portainer/portainer-ce:2.39.0
     container_name: recipe-portainer
@@ -89,6 +93,7 @@ services:
     restart: unless-stopped
     networks:
       - data-network
+      - web
   recipe-api:
     container_name: recipe-api
     image: python:3.11-slim
@@ -104,6 +109,7 @@ services:
       - "127.0.0.1:18000:8000"
     networks:
       - data-network
+      - web
     depends_on:
       - postgres
   spark-analytics:
@@ -180,6 +186,8 @@ services:
 networks:
   data-network:
     driver: bridge
+  web:
+    external: true
 
 volumes:
   postgres-db-volume:
