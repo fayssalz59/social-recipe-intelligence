@@ -380,6 +380,42 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
     """
     cursor.execute(merge_sql)
 
+def main() -> None:
+    load_dotenv()
+    configure_logging()
+
+    args = parse_args()
+    input_dir = Path(args.input_dir)
+
+    files = list_csv_files(input_dir, args.pattern)
+
+    database = os.getenv("SNOWFLAKE_DB", "TIKTOK_PORTFOLIO_DB")
+    bronze_schema = os.getenv("SNOWFLAKE_SCHEMA_BRONZE", "BRONZE")
+
+    stage_object = f"{database}.{bronze_schema}.TIKTOK_CSV_STAGE"
+    stage_name = f"@{stage_object}"
+    file_format_name = f"{database}.{bronze_schema}.CSV_TIKTOK_FORMAT"
+    load_table = f"{database}.{bronze_schema}.BRONZE_TIKTOK_RECIPES_LOAD"
+    bronze_table = f"{database}.{bronze_schema}.BRONZE_TIKTOK_RECIPES"
+
+    LOGGER.info("Found %s file(s) to ingest", len(files))
+
+    with get_snowflake_connection(schema=bronze_schema) as conn:
+        with conn.cursor() as cursor:
+            ensure_load_objects(cursor, database, bronze_schema, stage_object, load_table)
+            clear_stage(cursor, stage_name)
+            truncate_load_table(cursor, load_table)
+            upload_files_to_stage(cursor, files, stage_name)
+            copy_stage_to_load_table(cursor, stage_name, load_table, file_format_name)
+            merge_load_into_bronze(cursor, load_table, bronze_table)
+
+            if not args.keep_stage_files:
+                clear_stage(cursor, stage_name)
+
+        conn.commit()
+
+    LOGGER.info("Bronze ingestion completed successfully.")
+
 
 if __name__ == "__main__":
     main()
