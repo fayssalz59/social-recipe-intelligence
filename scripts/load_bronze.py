@@ -122,6 +122,9 @@ def ensure_load_objects(
             DESCRIPTION_SOURCE STRING,
             DESCRIPTION_LENGTH STRING,
             DESCRIPTION_ENRICHED STRING,
+            ORIGINAL_DESCRIPTION STRING,
+            RECOVERED_TEXT STRING,
+            EVIDENCE_TEXT STRING,
             SOURCE_FILE STRING
         );
         """
@@ -153,6 +156,9 @@ def copy_stage_to_load_table(
         DESCRIPTION_SOURCE,
         DESCRIPTION_LENGTH,
         DESCRIPTION_ENRICHED,
+        ORIGINAL_DESCRIPTION,
+        RECOVERED_TEXT,
+        EVIDENCE_TEXT,
         SOURCE_FILE
     )
     FROM (
@@ -173,6 +179,9 @@ def copy_stage_to_load_table(
             $14::STRING AS DESCRIPTION_SOURCE,
             $15::STRING AS DESCRIPTION_LENGTH,
             $16::STRING AS DESCRIPTION_ENRICHED,
+            $17::STRING AS ORIGINAL_DESCRIPTION,
+            $18::STRING AS RECOVERED_TEXT,
+            $19::STRING AS EVIDENCE_TEXT,
             METADATA$FILENAME::STRING AS SOURCE_FILE
         FROM {stage_name}
     )
@@ -201,6 +210,9 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
                 'platform', PLATFORM,
                 'content_id', CONTENT_ID,
                 'creator_username', CREATOR_USERNAME,
+                'original_description', ORIGINAL_DESCRIPTION,
+                'recovered_text', RECOVERED_TEXT,
+                'evidence_text', EVIDENCE_TEXT,
                 'source_platform_url', SOURCE_PLATFORM_URL,
                 'recipe_language_hint', RECIPE_LANGUAGE_HINT,
                 'cuisine_hint', CUISINE_HINT,

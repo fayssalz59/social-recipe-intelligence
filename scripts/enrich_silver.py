@@ -38,7 +38,10 @@ SYSTEM_PROMPT = (
     "\"ingredient\": string, \"ingredients\": array<string>, \"is_recipe\": boolean, "
     "\"recipe_status\": string, \"has_ingredient_list\": boolean, "
     "\"has_instructions\": boolean, \"caption_completeness_score\": number, "
-    "\"rejection_reason\": string}. "
+    "\"rejection_reason\": string, \"final_recipe_title\": string, "
+    "\"final_recipe_text\": string, \"final_recipe_json\": object, "
+    "\"missing_recipe_info\": array<string>, \"final_recipe_confidence\": number, "
+    "\"final_recipe_language\": string}. "
     "Rules: "
     "1. No text outside JSON. "
     "2. Normalize lang to ISO codes only: en, fr, es, it, pt, ar, or unknown. "
@@ -50,7 +53,11 @@ SYSTEM_PROMPT = (
     "8. ingredients must be a list of explicit ingredients found in the text, not guesses. "
     "9. ingredient is the main ingredient only. "
     "10. caption_completeness_score is between 0 and 1. "
-    "11. Infer only from the provided text; do not invent missing ingredients or steps."
+    "11. final_recipe_text is a clean user-facing recipe in Markdown using only provided evidence. "
+    "12. Do not invent missing quantities, timings, ingredients, or steps. Use 'not specified' when needed. "
+    "13. final_recipe_json must contain title, ingredients, steps, notes, and missing_info arrays. "
+    "14. If the evidence is not a recipe, keep final_recipe_text empty and explain in rejection_reason. "
+    "15. Infer only from the provided text; do not invent missing ingredients or steps."
 )
 
 
@@ -66,6 +73,12 @@ class RecipeEnrichment(BaseModel):
     has_instructions: bool = Field(default=False)
     caption_completeness_score: float = Field(default=0.0)
     rejection_reason: str = Field(default="")
+    final_recipe_title: str = Field(default="")
+    final_recipe_text: str = Field(default="")
+    final_recipe_json: dict[str, Any] = Field(default_factory=dict)
+    missing_recipe_info: list[str] = Field(default_factory=list)
+    final_recipe_confidence: float = Field(default=0.0)
+    final_recipe_language: str = Field(default="unknown")
 
 
 def coerce_nullable_bool(value: Any) -> bool | None:
@@ -138,6 +151,22 @@ def normalize_ingredients(value: Any, main_ingredient: str) -> list[str]:
     return output
 
 
+def normalize_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_values = value
+    elif isinstance(value, str):
+        raw_values = re_split_ingredients(value)
+    else:
+        raw_values = []
+
+    output: list[str] = []
+    for item in raw_values:
+        text = str(item or "").strip()
+        if text and text.lower() not in {"unknown", "none", "n/a", "null"} and text not in output:
+            output.append(text)
+    return output
+
+
 def re_split_ingredients(value: str) -> list[str]:
     separators = [",", ";", "|", "\n"]
     parts = [value]
@@ -164,6 +193,19 @@ def coerce_score(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, score))
+
+
+def normalize_final_recipe_json(value: Any, title: str, ingredients: list[str], missing_info: list[str]) -> dict[str, Any]:
+    if isinstance(value, dict):
+        output = dict(value)
+    else:
+        output = {}
+    output.setdefault("title", title or "Untitled recipe")
+    output.setdefault("ingredients", ingredients)
+    output.setdefault("steps", [])
+    output.setdefault("notes", [])
+    output.setdefault("missing_info", missing_info)
+    return output
 
 
 def normalize_llm_enrichment(enrichment_raw: Any) -> RecipeEnrichment:
@@ -210,6 +252,27 @@ def normalize_llm_enrichment(enrichment_raw: Any) -> RecipeEnrichment:
         is_recipe=is_recipe,
         completeness=completeness,
     )
+    final_recipe_language = normalize_language(
+        enrichment_payload.get("final_recipe_language", enrichment_payload.get("lang", lang))
+    )
+    final_recipe_title = str(enrichment_payload.get("final_recipe_title", enrichment_payload.get("recipe_title", "")) or "").strip()
+    final_recipe_text = str(enrichment_payload.get("final_recipe_text", enrichment_payload.get("recipe_text", "")) or "").strip()
+    missing_recipe_info = normalize_string_list(
+        enrichment_payload.get("missing_recipe_info", enrichment_payload.get("missing_info", []))
+    )
+    final_recipe_confidence = coerce_score(
+        enrichment_payload.get("final_recipe_confidence", enrichment_payload.get("recipe_confidence", completeness))
+    )
+    if not is_recipe:
+        final_recipe_title = ""
+        final_recipe_text = ""
+        final_recipe_confidence = 0.0
+    final_recipe_json = normalize_final_recipe_json(
+        enrichment_payload.get("final_recipe_json", enrichment_payload.get("recipe_json", {})),
+        title=final_recipe_title,
+        ingredients=ingredients,
+        missing_info=missing_recipe_info,
+    )
 
     normalized_payload = {
         "lang": lang,
@@ -225,6 +288,12 @@ def normalize_llm_enrichment(enrichment_raw: Any) -> RecipeEnrichment:
         "has_instructions": has_instructions,
         "caption_completeness_score": completeness,
         "rejection_reason": str(enrichment_payload.get("rejection_reason", "") or ""),
+        "final_recipe_title": final_recipe_title,
+        "final_recipe_text": final_recipe_text,
+        "final_recipe_json": final_recipe_json,
+        "missing_recipe_info": missing_recipe_info,
+        "final_recipe_confidence": final_recipe_confidence,
+        "final_recipe_language": final_recipe_language,
     }
 
     try:
@@ -240,6 +309,9 @@ def fetch_bronze_rows(limit: int, reprocess_all: bool = False) -> List[Dict[str,
         b.RAW_ID,
         b.TITLE,
         b.DESCRIPTION,
+        COALESCE(NULLIF(b.RAW_PAYLOAD:original_description::STRING, ''), b.DESCRIPTION) AS ORIGINAL_DESCRIPTION,
+        NULLIF(b.RAW_PAYLOAD:recovered_text::STRING, '') AS RECOVERED_TEXT,
+        COALESCE(NULLIF(b.RAW_PAYLOAD:evidence_text::STRING, ''), b.DESCRIPTION) AS EVIDENCE_TEXT,
         b.URL_TIKTOK,
         b.RECORD_HASH
     FROM {BRONZE_SCHEMA}.BRONZE_TIKTOK_RECIPES b
@@ -257,7 +329,24 @@ def fetch_bronze_rows(limit: int, reprocess_all: bool = False) -> List[Dict[str,
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def ask_openrouter(description: str, session: requests.Session) -> Dict[str, Any]:
+def build_evidence_prompt(row: Dict[str, Any]) -> str:
+    original_description = str(row.get("ORIGINAL_DESCRIPTION") or row.get("DESCRIPTION") or "").strip()
+    recovered_text = str(row.get("RECOVERED_TEXT") or "").strip()
+    evidence_text = str(row.get("EVIDENCE_TEXT") or row.get("DESCRIPTION") or "").strip()
+    payload = {
+        "source": "social_recipe_video",
+        "original_caption": original_description,
+        "recovered_text": recovered_text,
+        "evidence_text": evidence_text,
+        "instruction": (
+            "Analyze the evidence and produce structured metadata plus a clean final recipe. "
+            "Only use facts present in original_caption, recovered_text, or evidence_text."
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def ask_openrouter(row: Dict[str, Any], session: requests.Session) -> Dict[str, Any]:
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY is missing")
@@ -273,7 +362,7 @@ def ask_openrouter(description: str, session: requests.Session) -> Dict[str, Any
         "model": OPENROUTER_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": description},
+            {"role": "user", "content": build_evidence_prompt(row)},
         ],
         "temperature": 0,
         "response_format": {"type": "json_object"},
@@ -335,7 +424,9 @@ USING (
     SELECT
         %(raw_id)s AS RAW_ID,
         %(title)s AS ORIGINAL_TITLE,
-        %(description)s AS ORIGINAL_DESCRIPTION,
+        %(original_description)s AS ORIGINAL_DESCRIPTION,
+        %(recovered_text)s AS RECOVERED_TEXT,
+        %(evidence_text)s AS EVIDENCE_TEXT,
         %(url_tiktok)s AS URL_TIKTOK,
         %(recipe_language)s AS RECIPE_LANGUAGE,
         %(is_vegetarian)s AS IS_VEGETARIAN,
@@ -348,6 +439,12 @@ USING (
         %(has_instructions)s AS HAS_INSTRUCTIONS,
         %(caption_completeness_score)s AS CAPTION_COMPLETENESS_SCORE,
         %(rejection_reason)s AS REJECTION_REASON,
+        %(final_recipe_title)s AS FINAL_RECIPE_TITLE,
+        %(final_recipe_text)s AS FINAL_RECIPE_TEXT,
+        PARSE_JSON(%(final_recipe_json)s) AS FINAL_RECIPE_JSON,
+        PARSE_JSON(%(missing_recipe_info)s) AS MISSING_RECIPE_INFO,
+        %(final_recipe_confidence)s AS FINAL_RECIPE_CONFIDENCE,
+        %(final_recipe_language)s AS FINAL_RECIPE_LANGUAGE,
         %(processing_confidence)s AS PROCESSING_CONFIDENCE,
         %(model_name)s AS MODEL_NAME,
         PARSE_JSON(%(llm_raw_response)s) AS LLM_RAW_RESPONSE,
@@ -357,6 +454,8 @@ ON target.RAW_ID = source.RAW_ID
 WHEN MATCHED THEN UPDATE SET
     ORIGINAL_TITLE = source.ORIGINAL_TITLE,
     ORIGINAL_DESCRIPTION = source.ORIGINAL_DESCRIPTION,
+    RECOVERED_TEXT = source.RECOVERED_TEXT,
+    EVIDENCE_TEXT = source.EVIDENCE_TEXT,
     URL_TIKTOK = source.URL_TIKTOK,
     RECIPE_LANGUAGE = source.RECIPE_LANGUAGE,
     IS_VEGETARIAN = source.IS_VEGETARIAN,
@@ -369,6 +468,12 @@ WHEN MATCHED THEN UPDATE SET
     HAS_INSTRUCTIONS = source.HAS_INSTRUCTIONS,
     CAPTION_COMPLETENESS_SCORE = source.CAPTION_COMPLETENESS_SCORE,
     REJECTION_REASON = source.REJECTION_REASON,
+    FINAL_RECIPE_TITLE = source.FINAL_RECIPE_TITLE,
+    FINAL_RECIPE_TEXT = source.FINAL_RECIPE_TEXT,
+    FINAL_RECIPE_JSON = source.FINAL_RECIPE_JSON,
+    MISSING_RECIPE_INFO = source.MISSING_RECIPE_INFO,
+    FINAL_RECIPE_CONFIDENCE = source.FINAL_RECIPE_CONFIDENCE,
+    FINAL_RECIPE_LANGUAGE = source.FINAL_RECIPE_LANGUAGE,
     PROCESSING_CONFIDENCE = source.PROCESSING_CONFIDENCE,
     MODEL_NAME = source.MODEL_NAME,
     LLM_RAW_RESPONSE = source.LLM_RAW_RESPONSE,
@@ -378,6 +483,8 @@ WHEN NOT MATCHED THEN INSERT (
     RAW_ID,
     ORIGINAL_TITLE,
     ORIGINAL_DESCRIPTION,
+    RECOVERED_TEXT,
+    EVIDENCE_TEXT,
     URL_TIKTOK,
     RECIPE_LANGUAGE,
     IS_VEGETARIAN,
@@ -390,6 +497,12 @@ WHEN NOT MATCHED THEN INSERT (
     HAS_INSTRUCTIONS,
     CAPTION_COMPLETENESS_SCORE,
     REJECTION_REASON,
+    FINAL_RECIPE_TITLE,
+    FINAL_RECIPE_TEXT,
+    FINAL_RECIPE_JSON,
+    MISSING_RECIPE_INFO,
+    FINAL_RECIPE_CONFIDENCE,
+    FINAL_RECIPE_LANGUAGE,
     PROCESSING_CONFIDENCE,
     MODEL_NAME,
     LLM_RAW_RESPONSE,
@@ -398,6 +511,8 @@ WHEN NOT MATCHED THEN INSERT (
     source.RAW_ID,
     source.ORIGINAL_TITLE,
     source.ORIGINAL_DESCRIPTION,
+    source.RECOVERED_TEXT,
+    source.EVIDENCE_TEXT,
     source.URL_TIKTOK,
     source.RECIPE_LANGUAGE,
     source.IS_VEGETARIAN,
@@ -410,6 +525,12 @@ WHEN NOT MATCHED THEN INSERT (
     source.HAS_INSTRUCTIONS,
     source.CAPTION_COMPLETENESS_SCORE,
     source.REJECTION_REASON,
+    source.FINAL_RECIPE_TITLE,
+    source.FINAL_RECIPE_TEXT,
+    source.FINAL_RECIPE_JSON,
+    source.MISSING_RECIPE_INFO,
+    source.FINAL_RECIPE_CONFIDENCE,
+    source.FINAL_RECIPE_LANGUAGE,
     source.PROCESSING_CONFIDENCE,
     source.MODEL_NAME,
     source.LLM_RAW_RESPONSE,
@@ -424,7 +545,9 @@ def upsert_silver_row(row: Dict[str, Any], enrichment: Dict[str, Any]) -> None:
     payload = {
         "raw_id": row["RAW_ID"],
         "title": row["TITLE"],
-        "description": row["DESCRIPTION"],
+        "original_description": row.get("ORIGINAL_DESCRIPTION") or row["DESCRIPTION"],
+        "recovered_text": row.get("RECOVERED_TEXT") or "",
+        "evidence_text": row.get("EVIDENCE_TEXT") or row["DESCRIPTION"],
         "url_tiktok": row["URL_TIKTOK"],
         "recipe_language": structured["lang"],
         "is_vegetarian": structured["is_veg"],
@@ -437,6 +560,12 @@ def upsert_silver_row(row: Dict[str, Any], enrichment: Dict[str, Any]) -> None:
         "has_instructions": structured.get("has_instructions", False),
         "caption_completeness_score": structured.get("caption_completeness_score", 0),
         "rejection_reason": structured.get("rejection_reason", ""),
+        "final_recipe_title": structured.get("final_recipe_title", ""),
+        "final_recipe_text": structured.get("final_recipe_text", ""),
+        "final_recipe_json": json.dumps(structured.get("final_recipe_json") or {}),
+        "missing_recipe_info": json.dumps(structured.get("missing_recipe_info") or []),
+        "final_recipe_confidence": structured.get("final_recipe_confidence", 0),
+        "final_recipe_language": structured.get("final_recipe_language", structured.get("lang", "unknown")),
         "processing_confidence": enrichment["confidence"],
         "model_name": OPENROUTER_MODEL,
         "llm_raw_response": json.dumps(enrichment["raw_response"]),
@@ -450,19 +579,31 @@ def upsert_silver_row(row: Dict[str, Any], enrichment: Dict[str, Any]) -> None:
 
 
 def ensure_silver_schema() -> None:
-    statements = [
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS INGREDIENTS VARIANT",
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS IS_RECIPE BOOLEAN DEFAULT TRUE",
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS RECIPE_STATUS STRING DEFAULT 'partial_recipe'",
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS HAS_INGREDIENT_LIST BOOLEAN DEFAULT FALSE",
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS HAS_INSTRUCTIONS BOOLEAN DEFAULT FALSE",
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS CAPTION_COMPLETENESS_SCORE FLOAT DEFAULT 0",
-        f"ALTER TABLE {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES ADD COLUMN IF NOT EXISTS REJECTION_REASON STRING",
-    ]
+    table_name = f"{SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES"
+    columns = {
+        "INGREDIENTS": "VARIANT",
+        "RECOVERED_TEXT": "STRING",
+        "EVIDENCE_TEXT": "STRING",
+        "IS_RECIPE": "BOOLEAN DEFAULT TRUE",
+        "RECIPE_STATUS": "STRING DEFAULT 'partial_recipe'",
+        "HAS_INGREDIENT_LIST": "BOOLEAN DEFAULT FALSE",
+        "HAS_INSTRUCTIONS": "BOOLEAN DEFAULT FALSE",
+        "CAPTION_COMPLETENESS_SCORE": "FLOAT DEFAULT 0",
+        "REJECTION_REASON": "STRING",
+        "FINAL_RECIPE_TITLE": "STRING",
+        "FINAL_RECIPE_TEXT": "STRING",
+        "FINAL_RECIPE_JSON": "VARIANT",
+        "MISSING_RECIPE_INFO": "VARIANT",
+        "FINAL_RECIPE_CONFIDENCE": "FLOAT DEFAULT 0",
+        "FINAL_RECIPE_LANGUAGE": "STRING",
+    }
     with get_snowflake_connection(schema=SILVER_SCHEMA) as conn:
         with conn.cursor() as cursor:
-            for statement in statements:
-                cursor.execute(statement)
+            cursor.execute(f"DESC TABLE {table_name}")
+            existing_columns = {str(row[0]).upper() for row in cursor.fetchall()}
+            for column_name, column_type in columns.items():
+                if column_name not in existing_columns:
+                    cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
         conn.commit()
 
 
@@ -496,7 +637,7 @@ def main() -> None:
     with requests.Session() as session:
         for row in rows:
             try:
-                enrichment = ask_openrouter(row["DESCRIPTION"], session=session)
+                enrichment = ask_openrouter(row, session=session)
 
                 if args.dry_run:
                     LOGGER.info(

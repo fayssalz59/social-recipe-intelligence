@@ -53,6 +53,9 @@ CSV_COLUMNS = [
     "DESCRIPTION_SOURCE",
     "DESCRIPTION_LENGTH",
     "DESCRIPTION_ENRICHED",
+    "ORIGINAL_DESCRIPTION",
+    "RECOVERED_TEXT",
+    "EVIDENCE_TEXT",
 ]
 
 DEFAULT_CREATOR_USERNAMES = [
@@ -412,6 +415,9 @@ def extract_video_fields(
     return {
         "TITLE": description[:120],
         "DESCRIPTION": description,
+        "ORIGINAL_DESCRIPTION": description,
+        "RECOVERED_TEXT": "",
+        "EVIDENCE_TEXT": description,
         "URL_TIKTOK": url,
         "PLATFORM": "tiktok",
         "CONTENT_ID": video_id,
@@ -659,8 +665,17 @@ async def enrich_row_caption(row: dict[str, str], args: argparse.Namespace) -> d
         len(caption),
         source,
     )
+    original_description = row.get("ORIGINAL_DESCRIPTION") or existing
+    evidence_parts = [original_description]
+    if caption and caption != original_description:
+        evidence_parts.append(caption)
+    evidence_text = "\n\n".join(part for part in evidence_parts if part)
+
     row["DESCRIPTION"] = caption
     row["TITLE"] = caption[:120]
+    row["ORIGINAL_DESCRIPTION"] = original_description
+    row["RECOVERED_TEXT"] = caption if caption != original_description else ""
+    row["EVIDENCE_TEXT"] = evidence_text
     row["RECIPE_LANGUAGE_HINT"] = infer_language(caption)
     row["DESCRIPTION_IS_PARTIAL"] = "false" if len(caption) >= args.caption_min_length else "true"
     row["DATA_ORIGIN"] = f"{row.get('DATA_ORIGIN') or 'tiktokapi_discovery'}+caption_enrichment"

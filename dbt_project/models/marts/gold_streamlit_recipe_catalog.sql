@@ -1,6 +1,9 @@
 select
     raw_id,
     display_title,
+    original_description,
+    recovered_text,
+    evidence_text,
     url_tiktok,
     recipe_language,
     is_vegetarian,
@@ -13,6 +16,12 @@ select
     has_instructions,
     caption_completeness_score,
     rejection_reason,
+    final_recipe_title,
+    final_recipe_text,
+    final_recipe_json,
+    missing_recipe_info,
+    final_recipe_confidence,
+    final_recipe_language,
     processing_confidence,
     model_name,
     processed_at

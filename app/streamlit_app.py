@@ -258,6 +258,9 @@ def load_catalog() -> pd.DataFrame:
     SELECT
         RAW_ID,
         DISPLAY_TITLE,
+        ORIGINAL_DESCRIPTION,
+        RECOVERED_TEXT,
+        EVIDENCE_TEXT,
         URL_TIKTOK,
         RECIPE_LANGUAGE,
         IS_VEGETARIAN,
@@ -270,6 +273,12 @@ def load_catalog() -> pd.DataFrame:
         HAS_INSTRUCTIONS,
         CAPTION_COMPLETENESS_SCORE,
         REJECTION_REASON,
+        FINAL_RECIPE_TITLE,
+        FINAL_RECIPE_TEXT,
+        FINAL_RECIPE_JSON,
+        MISSING_RECIPE_INFO,
+        FINAL_RECIPE_CONFIDENCE,
+        FINAL_RECIPE_LANGUAGE,
         PROCESSING_CONFIDENCE,
         MODEL_NAME,
         PROCESSED_AT
@@ -367,6 +376,10 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
             + filtered["MAIN_INGREDIENT"].fillna("").astype(str)
             + " "
             + filtered.get("INGREDIENTS", pd.Series([""] * len(filtered), index=filtered.index)).fillna("").astype(str)
+            + " "
+            + filtered.get("FINAL_RECIPE_TEXT", pd.Series([""] * len(filtered), index=filtered.index)).fillna("").astype(str)
+            + " "
+            + filtered.get("ORIGINAL_DESCRIPTION", pd.Series([""] * len(filtered), index=filtered.index)).fillna("").astype(str)
         ).str.lower()
         filtered = filtered[searchable.str.contains(pattern, regex=False)]
 
@@ -550,6 +563,10 @@ def filter_for_search(
             + filtered["MAIN_INGREDIENT"].fillna("").astype(str)
             + " "
             + filtered["RECIPE_LANGUAGE"].fillna("").astype(str)
+            + " "
+            + filtered.get("FINAL_RECIPE_TEXT", pd.Series([""] * len(filtered), index=filtered.index)).fillna("").astype(str)
+            + " "
+            + filtered.get("ORIGINAL_DESCRIPTION", pd.Series([""] * len(filtered), index=filtered.index)).fillna("").astype(str)
         ).str.lower()
         filtered = filtered[searchable.str.contains(pattern, regex=False)]
 
@@ -567,6 +584,10 @@ def render_result_card(row: pd.Series) -> None:
     dietary = "Vegetarian" if is_true(row.get("IS_VEGETARIAN")) else "Non-vegetarian"
     recipe_status = safe_scalar(row.get("RECIPE_STATUS"), "unknown")
     completeness = row.get("CAPTION_COMPLETENESS_SCORE", 0)
+    final_confidence = row.get("FINAL_RECIPE_CONFIDENCE", 0)
+    final_recipe_text = safe_scalar(row.get("FINAL_RECIPE_TEXT"), "")
+    original_description = safe_scalar(row.get("ORIGINAL_DESCRIPTION"), "")
+    recovered_text = safe_scalar(row.get("RECOVERED_TEXT"), "")
 
     with st.container(border=True):
         body_col, action_col = st.columns([5.6, 1.1])
@@ -588,10 +609,20 @@ def render_result_card(row: pd.Series) -> None:
             st.markdown(
                 "<div class='result-meta'>"
                 f"Confidence {confidence:.2f} | Completeness {completeness:.2f} | "
+                f"Recipe confidence {final_confidence:.2f} | "
                 f"Model {model} | Processed {safe_scalar(row.get('PROCESSED_AT'))}"
                 "</div>",
                 unsafe_allow_html=True,
             )
+            if final_recipe_text:
+                with st.expander("Recipe card"):
+                    st.markdown(final_recipe_text)
+            with st.expander("Source evidence"):
+                st.markdown("**Original caption**")
+                st.write(original_description)
+                if recovered_text:
+                    st.markdown("**Recovered text**")
+                    st.write(recovered_text)
         with action_col:
             if url.startswith("http"):
                 st.link_button("Open", url, use_container_width=True)
@@ -775,11 +806,23 @@ def render_catalog(filtered: pd.DataFrame) -> None:
             st.markdown(
                 "<div class='recipe-meta'>"
                 f"Confidence: {row.get('PROCESSING_CONFIDENCE', 0):.2f} | "
+                f"Recipe confidence: {row.get('FINAL_RECIPE_CONFIDENCE', 0):.2f} | "
                 f"Model: {safe_scalar(row.get('MODEL_NAME'))} | "
                 f"Processed: {safe_scalar(row.get('PROCESSED_AT'))}"
                 "</div>",
                 unsafe_allow_html=True,
             )
+            final_recipe_text = safe_scalar(row.get("FINAL_RECIPE_TEXT"), "")
+            if final_recipe_text:
+                with st.expander("Final recipe"):
+                    st.markdown(final_recipe_text)
+            with st.expander("Original evidence"):
+                st.markdown("**Original caption**")
+                st.write(safe_scalar(row.get("ORIGINAL_DESCRIPTION"), ""))
+                recovered_text = safe_scalar(row.get("RECOVERED_TEXT"), "")
+                if recovered_text:
+                    st.markdown("**Recovered text**")
+                    st.write(recovered_text)
 
     if len(display_df) > 60:
         st.caption(f"Showing 60 of {len(display_df)} matching recipes.")
@@ -847,12 +890,18 @@ def render_quality(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
     st.dataframe(pd.DataFrame(quality_rows), use_container_width=True, hide_index=True)
 
     low_confidence = filtered[filtered["PROCESSING_CONFIDENCE"].fillna(0) < 0.75]
+    if "FINAL_RECIPE_CONFIDENCE" in filtered:
+        weak_final_recipes = filtered[filtered["FINAL_RECIPE_CONFIDENCE"].fillna(0) < 0.65]
+        st.metric("Weak final recipe cards", f"{len(weak_final_recipes):,}")
     st.subheader("Records to review")
     st.dataframe(
         low_confidence[
             [
                 "RAW_ID",
                 "DISPLAY_TITLE",
+                "RECIPE_STATUS",
+                "CAPTION_COMPLETENESS_SCORE",
+                "FINAL_RECIPE_CONFIDENCE",
                 "RECIPE_LANGUAGE",
                 "CUISINE_STYLE",
                 "MAIN_INGREDIENT",
@@ -916,6 +965,11 @@ def main() -> None:
         df["CAPTION_COMPLETENESS_SCORE"] = pd.to_numeric(df["CAPTION_COMPLETENESS_SCORE"], errors="coerce").fillna(0)
     if "RECIPE_STATUS" in df:
         df["RECIPE_STATUS"] = df["RECIPE_STATUS"].fillna("unknown")
+    if "FINAL_RECIPE_CONFIDENCE" in df:
+        df["FINAL_RECIPE_CONFIDENCE"] = pd.to_numeric(df["FINAL_RECIPE_CONFIDENCE"], errors="coerce").fillna(0)
+    for text_column in ["FINAL_RECIPE_TEXT", "ORIGINAL_DESCRIPTION", "RECOVERED_TEXT"]:
+        if text_column in df:
+            df[text_column] = df[text_column].fillna("")
     df["MODEL_NAME"] = df.get("MODEL_NAME", pd.Series(["unknown"] * len(df))).fillna("unknown")
 
     if page == "Search":
