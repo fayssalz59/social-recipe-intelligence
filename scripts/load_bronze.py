@@ -194,45 +194,139 @@ def copy_stage_to_load_table(
 def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
     LOGGER.info("Merging load table into bronze target %s", bronze_table)
 
+    duplicate_check_sql = f"""
+    WITH normalized AS (
+        SELECT
+            CASE
+                WHEN NULLIF(TRIM(CONTENT_ID), '') IS NOT NULL THEN
+                    COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
+                    || '|content_id|'
+                    || NULLIF(TRIM(CONTENT_ID), '')
+                ELSE
+                    COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
+                    || '|url|'
+                    || NULLIF(TRIM(URL_TIKTOK), '')
+            END AS BUSINESS_KEY
+        FROM {load_table}
+        WHERE URL_TIKTOK IS NOT NULL
+    )
+    SELECT COUNT(*) AS DUPLICATE_BUSINESS_KEYS
+    FROM (
+        SELECT BUSINESS_KEY
+        FROM normalized
+        WHERE BUSINESS_KEY IS NOT NULL
+        GROUP BY BUSINESS_KEY
+        HAVING COUNT(*) > 1
+    );
+    """
+    cursor.execute(duplicate_check_sql)
+    duplicate_count = cursor.fetchone()[0]
+    if duplicate_count:
+        LOGGER.warning(
+            "Detected %s duplicate TikTok business key(s) in the load table. "
+            "The loader will keep the best row per key before MERGE.",
+            duplicate_count,
+        )
+
     merge_sql = f"""
     MERGE INTO {bronze_table} AS tgt
     USING (
+        WITH normalized_source AS (
+            SELECT
+                COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok') AS PLATFORM,
+                NULLIF(TRIM(CONTENT_ID), '') AS CONTENT_ID,
+                NULLIF(TRIM(CREATOR_USERNAME), '') AS CREATOR_USERNAME,
+                NULLIF(TRIM(TITLE), '') AS TITLE,
+                NULLIF(TRIM(DESCRIPTION), '') AS DESCRIPTION,
+                NULLIF(TRIM(URL_TIKTOK), '') AS URL_TIKTOK,
+                COALESCE(DESCRIPTION_IS_PARTIAL, FALSE) AS DESCRIPTION_IS_PARTIAL,
+                SOURCE_FILE,
+                ORIGINAL_DESCRIPTION,
+                RECOVERED_TEXT,
+                EVIDENCE_TEXT,
+                SOURCE_PLATFORM_URL,
+                RECIPE_LANGUAGE_HINT,
+                CUISINE_HINT,
+                MAIN_INGREDIENT_HINT,
+                DATA_ORIGIN,
+                VERIFICATION_SOURCE_URL,
+                DESCRIPTION_SOURCE,
+                DESCRIPTION_LENGTH,
+                DESCRIPTION_ENRICHED,
+                CASE
+                    WHEN NULLIF(TRIM(CONTENT_ID), '') IS NOT NULL THEN
+                        COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
+                        || '|content_id|'
+                        || NULLIF(TRIM(CONTENT_ID), '')
+                    ELSE
+                        COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok')
+                        || '|url|'
+                        || NULLIF(TRIM(URL_TIKTOK), '')
+                END AS BUSINESS_KEY
+            FROM {load_table}
+            WHERE URL_TIKTOK IS NOT NULL
+        ),
+
+        ranked_source AS (
+            SELECT
+                PLATFORM,
+                CONTENT_ID,
+                CREATOR_USERNAME,
+                TITLE,
+                DESCRIPTION,
+                URL_TIKTOK,
+                DESCRIPTION_IS_PARTIAL,
+                SOURCE_FILE,
+                OBJECT_CONSTRUCT_KEEP_NULL(
+                    'platform', PLATFORM,
+                    'content_id', CONTENT_ID,
+                    'creator_username', CREATOR_USERNAME,
+                    'original_description', ORIGINAL_DESCRIPTION,
+                    'recovered_text', RECOVERED_TEXT,
+                    'evidence_text', EVIDENCE_TEXT,
+                    'source_platform_url', SOURCE_PLATFORM_URL,
+                    'recipe_language_hint', RECIPE_LANGUAGE_HINT,
+                    'cuisine_hint', CUISINE_HINT,
+                    'main_ingredient_hint', MAIN_INGREDIENT_HINT,
+                    'description_is_partial', DESCRIPTION_IS_PARTIAL,
+                    'data_origin', DATA_ORIGIN,
+                    'verification_source_url', VERIFICATION_SOURCE_URL,
+                    'description_source', DESCRIPTION_SOURCE,
+                    'description_length', DESCRIPTION_LENGTH,
+                    'description_enriched', DESCRIPTION_ENRICHED
+                ) AS RAW_PAYLOAD,
+                SHA2(
+                    COALESCE(PLATFORM, 'tiktok') || '|' ||
+                    COALESCE(DESCRIPTION, '') || '|' ||
+                    COALESCE(TITLE, '') || '|' ||
+                    COALESCE(URL_TIKTOK, ''),
+                    256
+                ) AS RECORD_HASH,
+                ROW_NUMBER() OVER (
+                    PARTITION BY BUSINESS_KEY
+                    ORDER BY
+                        LENGTH(COALESCE(EVIDENCE_TEXT, '')) DESC,
+                        LENGTH(COALESCE(DESCRIPTION, '')) DESC,
+                        IFF(TRY_TO_BOOLEAN(DESCRIPTION_ENRICHED), 1, 0) DESC,
+                        SOURCE_FILE DESC
+                ) AS ROW_NUM
+            FROM normalized_source
+            WHERE BUSINESS_KEY IS NOT NULL
+        )
+
         SELECT
-            COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok') AS PLATFORM,
-            NULLIF(TRIM(CONTENT_ID), '') AS CONTENT_ID,
-            NULLIF(TRIM(CREATOR_USERNAME), '') AS CREATOR_USERNAME,
-            NULLIF(TRIM(TITLE), '') AS TITLE,
-            NULLIF(TRIM(DESCRIPTION), '') AS DESCRIPTION,
-            NULLIF(TRIM(URL_TIKTOK), '') AS URL_TIKTOK,
-            COALESCE(DESCRIPTION_IS_PARTIAL, FALSE) AS DESCRIPTION_IS_PARTIAL,
+            PLATFORM,
+            CONTENT_ID,
+            CREATOR_USERNAME,
+            TITLE,
+            DESCRIPTION,
+            URL_TIKTOK,
+            DESCRIPTION_IS_PARTIAL,
             SOURCE_FILE,
-            OBJECT_CONSTRUCT_KEEP_NULL(
-                'platform', PLATFORM,
-                'content_id', CONTENT_ID,
-                'creator_username', CREATOR_USERNAME,
-                'original_description', ORIGINAL_DESCRIPTION,
-                'recovered_text', RECOVERED_TEXT,
-                'evidence_text', EVIDENCE_TEXT,
-                'source_platform_url', SOURCE_PLATFORM_URL,
-                'recipe_language_hint', RECIPE_LANGUAGE_HINT,
-                'cuisine_hint', CUISINE_HINT,
-                'main_ingredient_hint', MAIN_INGREDIENT_HINT,
-                'description_is_partial', DESCRIPTION_IS_PARTIAL,
-                'data_origin', DATA_ORIGIN,
-                'verification_source_url', VERIFICATION_SOURCE_URL,
-                'description_source', DESCRIPTION_SOURCE,
-                'description_length', DESCRIPTION_LENGTH,
-                'description_enriched', DESCRIPTION_ENRICHED
-            ) AS RAW_PAYLOAD,
-            SHA2(
-                COALESCE(TRIM(PLATFORM), 'tiktok') || '|' ||
-                COALESCE(TRIM(DESCRIPTION), '') || '|' ||
-                COALESCE(TRIM(TITLE), '') || '|' ||
-                COALESCE(TRIM(URL_TIKTOK), ''),
-                256
-            ) AS RECORD_HASH
-        FROM {load_table}
-        WHERE URL_TIKTOK IS NOT NULL
+            RAW_PAYLOAD,
+            RECORD_HASH
+        FROM ranked_source
+        WHERE ROW_NUM = 1
     ) AS src
     ON (
         src.CONTENT_ID IS NOT NULL
@@ -285,7 +379,6 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
     );
     """
     cursor.execute(merge_sql)
-
 
 def main() -> None:
     load_dotenv()
