@@ -4,6 +4,8 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     xvfb \
+    xauth \
+    procps \
     wget \
     curl \
     ca-certificates \
@@ -37,8 +39,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements-tiktok-monitor.txt /app/requirements-tiktok-monitor.txt
 
 RUN pip install --no-cache-dir -r /app/requirements-tiktok-monitor.txt
-RUN python -m playwright install
+RUN python -m playwright install --with-deps chromium
 
 COPY . /app
 
-CMD ["xvfb-run", "-a", "python", "-u", "-m", "scripts.tiktok_creator_monitor"]
+CMD ["bash", "-lc", "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > /tmp/xvfb.log 2>&1 & export DISPLAY=:99; exec python -u -m scripts.tiktok_creator_monitor"]

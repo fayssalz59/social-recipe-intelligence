@@ -77,19 +77,97 @@ def truncate_load_table(cursor, load_table: str) -> None:
     cursor.execute(f"TRUNCATE TABLE {load_table}")
 
 
-def copy_stage_to_load_table(cursor, stage_name: str, load_table: str) -> None:
+def ensure_load_objects(
+    cursor,
+    database: str,
+    bronze_schema: str,
+    stage_object: str,
+    load_table: str,
+) -> None:
+    """Create the transient CSV landing objects used by the Bronze loader."""
+    cursor.execute(
+        f"""
+        CREATE OR REPLACE FILE FORMAT {database}.{bronze_schema}.CSV_TIKTOK_FORMAT
+            TYPE = CSV
+            FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+            SKIP_HEADER = 1
+            TRIM_SPACE = TRUE
+            NULL_IF = ('', 'NULL', 'null')
+            EMPTY_FIELD_AS_NULL = TRUE
+            ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE;
+        """
+    )
+    cursor.execute(
+        f"""
+        CREATE STAGE IF NOT EXISTS {stage_object}
+            FILE_FORMAT = {database}.{bronze_schema}.CSV_TIKTOK_FORMAT;
+        """
+    )
+    cursor.execute(
+        f"""
+        CREATE OR REPLACE TEMPORARY TABLE {load_table} (
+            TITLE STRING,
+            DESCRIPTION STRING,
+            URL_TIKTOK STRING,
+            PLATFORM STRING,
+            CONTENT_ID STRING,
+            CREATOR_USERNAME STRING,
+            SOURCE_PLATFORM_URL STRING,
+            RECIPE_LANGUAGE_HINT STRING,
+            CUISINE_HINT STRING,
+            MAIN_INGREDIENT_HINT STRING,
+            DESCRIPTION_IS_PARTIAL BOOLEAN,
+            DATA_ORIGIN STRING,
+            VERIFICATION_SOURCE_URL STRING,
+            SOURCE_FILE STRING
+        );
+        """
+    )
+
+
+def copy_stage_to_load_table(
+    cursor,
+    stage_name: str,
+    load_table: str,
+    file_format_name: str,
+) -> None:
     LOGGER.info("Copying staged files into load table %s", load_table)
     copy_sql = f"""
-    COPY INTO {load_table} (TITLE, DESCRIPTION, URL_TIKTOK, SOURCE_FILE)
+    COPY INTO {load_table} (
+        TITLE,
+        DESCRIPTION,
+        URL_TIKTOK,
+        PLATFORM,
+        CONTENT_ID,
+        CREATOR_USERNAME,
+        SOURCE_PLATFORM_URL,
+        RECIPE_LANGUAGE_HINT,
+        CUISINE_HINT,
+        MAIN_INGREDIENT_HINT,
+        DESCRIPTION_IS_PARTIAL,
+        DATA_ORIGIN,
+        VERIFICATION_SOURCE_URL,
+        SOURCE_FILE
+    )
     FROM (
         SELECT
             $1::STRING AS TITLE,
             $2::STRING AS DESCRIPTION,
             $3::STRING AS URL_TIKTOK,
+            $4::STRING AS PLATFORM,
+            $5::STRING AS CONTENT_ID,
+            $6::STRING AS CREATOR_USERNAME,
+            $7::STRING AS SOURCE_PLATFORM_URL,
+            $8::STRING AS RECIPE_LANGUAGE_HINT,
+            $9::STRING AS CUISINE_HINT,
+            $10::STRING AS MAIN_INGREDIENT_HINT,
+            TRY_TO_BOOLEAN($11::STRING) AS DESCRIPTION_IS_PARTIAL,
+            $12::STRING AS DATA_ORIGIN,
+            $13::STRING AS VERIFICATION_SOURCE_URL,
             METADATA$FILENAME::STRING AS SOURCE_FILE
         FROM {stage_name}
     )
-    FILE_FORMAT = (FORMAT_NAME = 'BRONZE.CSV_TIKTOK_FORMAT')
+    FILE_FORMAT = (FORMAT_NAME = '{file_format_name}')
     ON_ERROR = 'CONTINUE';
     """
     cursor.execute(copy_sql)
@@ -102,13 +180,30 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
     MERGE INTO {bronze_table} AS tgt
     USING (
         SELECT
+            COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok') AS PLATFORM,
+            NULLIF(TRIM(CONTENT_ID), '') AS CONTENT_ID,
+            NULLIF(TRIM(CREATOR_USERNAME), '') AS CREATOR_USERNAME,
             TITLE,
             DESCRIPTION,
             URL_TIKTOK,
+            COALESCE(DESCRIPTION_IS_PARTIAL, FALSE) AS DESCRIPTION_IS_PARTIAL,
             SOURCE_FILE,
+            OBJECT_CONSTRUCT_KEEP_NULL(
+                'platform', PLATFORM,
+                'content_id', CONTENT_ID,
+                'creator_username', CREATOR_USERNAME,
+                'source_platform_url', SOURCE_PLATFORM_URL,
+                'recipe_language_hint', RECIPE_LANGUAGE_HINT,
+                'cuisine_hint', CUISINE_HINT,
+                'main_ingredient_hint', MAIN_INGREDIENT_HINT,
+                'description_is_partial', DESCRIPTION_IS_PARTIAL,
+                'data_origin', DATA_ORIGIN,
+                'verification_source_url', VERIFICATION_SOURCE_URL
+            ) AS RAW_PAYLOAD,
             SHA2(
-                COALESCE(TRIM(TITLE), '') || '|' ||
+                COALESCE(TRIM(PLATFORM), 'tiktok') || '|' ||
                 COALESCE(TRIM(DESCRIPTION), '') || '|' ||
+                COALESCE(TRIM(TITLE), '') || '|' ||
                 COALESCE(TRIM(URL_TIKTOK), ''),
                 256
             ) AS RECORD_HASH
@@ -117,16 +212,26 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
     ) AS src
     ON tgt.RECORD_HASH = src.RECORD_HASH
     WHEN NOT MATCHED THEN INSERT (
+        PLATFORM,
+        CONTENT_ID,
+        CREATOR_USERNAME,
         TITLE,
         DESCRIPTION,
+        DESCRIPTION_IS_PARTIAL,
         URL_TIKTOK,
         SOURCE_FILE,
+        RAW_PAYLOAD,
         RECORD_HASH
     ) VALUES (
+        src.PLATFORM,
+        src.CONTENT_ID,
+        src.CREATOR_USERNAME,
         src.TITLE,
         src.DESCRIPTION,
+        src.DESCRIPTION_IS_PARTIAL,
         src.URL_TIKTOK,
         src.SOURCE_FILE,
+        src.RAW_PAYLOAD,
         src.RECORD_HASH
     );
     """
@@ -145,7 +250,9 @@ def main() -> None:
     database = os.getenv("SNOWFLAKE_DB", "TIKTOK_PORTFOLIO_DB")
     bronze_schema = os.getenv("SNOWFLAKE_SCHEMA_BRONZE", "BRONZE")
 
-    stage_name = f"@{database}.{bronze_schema}.TIKTOK_CSV_STAGE"
+    stage_object = f"{database}.{bronze_schema}.TIKTOK_CSV_STAGE"
+    stage_name = f"@{stage_object}"
+    file_format_name = f"{database}.{bronze_schema}.CSV_TIKTOK_FORMAT"
     load_table = f"{database}.{bronze_schema}.BRONZE_TIKTOK_RECIPES_LOAD"
     bronze_table = f"{database}.{bronze_schema}.BRONZE_TIKTOK_RECIPES"
 
@@ -153,10 +260,11 @@ def main() -> None:
 
     with get_snowflake_connection(schema=bronze_schema) as conn:
         with conn.cursor() as cursor:
+            ensure_load_objects(cursor, database, bronze_schema, stage_object, load_table)
             clear_stage(cursor, stage_name)
             truncate_load_table(cursor, load_table)
             upload_files_to_stage(cursor, files, stage_name)
-            copy_stage_to_load_table(cursor, stage_name, load_table)
+            copy_stage_to_load_table(cursor, stage_name, load_table, file_format_name)
             merge_load_into_bronze(cursor, load_table, bronze_table)
 
             if not args.keep_stage_files:
