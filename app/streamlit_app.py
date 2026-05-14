@@ -263,6 +263,13 @@ def load_catalog() -> pd.DataFrame:
         IS_VEGETARIAN,
         CUISINE_STYLE,
         MAIN_INGREDIENT,
+        INGREDIENTS,
+        IS_RECIPE,
+        RECIPE_STATUS,
+        HAS_INGREDIENT_LIST,
+        HAS_INSTRUCTIONS,
+        CAPTION_COMPLETENESS_SCORE,
+        REJECTION_REASON,
         PROCESSING_CONFIDENCE,
         MODEL_NAME,
         PROCESSED_AT
@@ -310,11 +317,13 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     cuisine_options = sorted(df["CUISINE_STYLE"].dropna().astype(str).unique().tolist())
     ingredient_options = sorted(df["MAIN_INGREDIENT"].dropna().astype(str).unique().tolist())
     model_options = sorted(df["MODEL_NAME"].dropna().astype(str).unique().tolist())
+    status_options = sorted(df.get("RECIPE_STATUS", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
 
     selected_languages = st.sidebar.multiselect("Language", language_options, default=language_options)
     selected_cuisines = st.sidebar.multiselect("Cuisine", cuisine_options, default=cuisine_options)
     selected_ingredients = st.sidebar.multiselect("Main ingredient", ingredient_options, default=[])
     selected_models = st.sidebar.multiselect("LLM model", model_options, default=model_options)
+    selected_statuses = st.sidebar.multiselect("Recipe status", status_options, default=status_options)
 
     vegetarian_mode = st.sidebar.radio(
         "Vegetarian",
@@ -337,6 +346,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     filtered = filtered[filtered["CUISINE_STYLE"].astype(str).isin(selected_cuisines)]
     filtered = filtered[filtered["MODEL_NAME"].astype(str).isin(selected_models)]
     filtered = filtered[filtered["PROCESSING_CONFIDENCE"].fillna(0) >= min_confidence]
+    if selected_statuses and "RECIPE_STATUS" in filtered:
+        filtered = filtered[filtered["RECIPE_STATUS"].astype(str).isin(selected_statuses)]
 
     if selected_ingredients:
         filtered = filtered[filtered["MAIN_INGREDIENT"].astype(str).isin(selected_ingredients)]
@@ -354,6 +365,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
             + filtered["CUISINE_STYLE"].fillna("").astype(str)
             + " "
             + filtered["MAIN_INGREDIENT"].fillna("").astype(str)
+            + " "
+            + filtered.get("INGREDIENTS", pd.Series([""] * len(filtered), index=filtered.index)).fillna("").astype(str)
         ).str.lower()
         filtered = filtered[searchable.str.contains(pattern, regex=False)]
 
@@ -552,6 +565,8 @@ def render_result_card(row: pd.Series) -> None:
     confidence = row.get("PROCESSING_CONFIDENCE", 0)
     model = safe_scalar(row.get("MODEL_NAME"))
     dietary = "Vegetarian" if is_true(row.get("IS_VEGETARIAN")) else "Non-vegetarian"
+    recipe_status = safe_scalar(row.get("RECIPE_STATUS"), "unknown")
+    completeness = row.get("CAPTION_COMPLETENESS_SCORE", 0)
 
     with st.container(border=True):
         body_col, action_col = st.columns([5.6, 1.1])
@@ -565,13 +580,15 @@ def render_result_card(row: pd.Series) -> None:
                         f"<span class='pill'>{ingredient}</span>",
                         f"<span class='pill'>{language}</span>",
                         f"<span class='pill'>{dietary}</span>",
+                        f"<span class='pill'>{recipe_status}</span>",
                     ]
                 ),
                 unsafe_allow_html=True,
             )
             st.markdown(
                 "<div class='result-meta'>"
-                f"Confidence {confidence:.2f} | Model {model} | Processed {safe_scalar(row.get('PROCESSED_AT'))}"
+                f"Confidence {confidence:.2f} | Completeness {completeness:.2f} | "
+                f"Model {model} | Processed {safe_scalar(row.get('PROCESSED_AT'))}"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -895,6 +912,10 @@ def main() -> None:
 
     df["PROCESSED_AT"] = pd.to_datetime(df["PROCESSED_AT"], errors="coerce")
     df["PROCESSING_CONFIDENCE"] = pd.to_numeric(df["PROCESSING_CONFIDENCE"], errors="coerce")
+    if "CAPTION_COMPLETENESS_SCORE" in df:
+        df["CAPTION_COMPLETENESS_SCORE"] = pd.to_numeric(df["CAPTION_COMPLETENESS_SCORE"], errors="coerce").fillna(0)
+    if "RECIPE_STATUS" in df:
+        df["RECIPE_STATUS"] = df["RECIPE_STATUS"].fillna("unknown")
     df["MODEL_NAME"] = df.get("MODEL_NAME", pd.Series(["unknown"] * len(df))).fillna("unknown")
 
     if page == "Search":

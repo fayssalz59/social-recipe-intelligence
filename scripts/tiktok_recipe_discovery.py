@@ -8,7 +8,7 @@ import logging
 import os
 import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -26,6 +26,7 @@ except ModuleNotFoundError:  # pragma: no cover - checked at runtime for real di
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "raw" / "tiktok_recipe_discovery.csv"
 DEFAULT_REJECTS_OUTPUT = REPO_ROOT / "data" / "raw" / "tiktok_recipe_discovery_rejected_debug.csv"
+DEFAULT_STATE_PATH = REPO_ROOT / "data" / "state" / "tiktok_creator_scrape_state.json"
 
 CSV_COLUMNS = [
     "TITLE",
@@ -198,6 +199,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--creators-file", default=None, help="Optional newline or JSON list of creators.")
     parser.add_argument("--hashtags-file", default=None, help="Optional newline or JSON list of hashtags.")
     parser.add_argument("--queries-file", default=None, help="Optional newline or JSON list of user search terms.")
+    parser.add_argument("--state-path", default=str(DEFAULT_STATE_PATH), help="Creator scrape state JSON path.")
+    parser.add_argument(
+        "--daily-skip-hours",
+        type=float,
+        default=24.0,
+        help="Skip a creator completed less than this many hours ago.",
+    )
+    parser.add_argument("--force-rescrape", action="store_true", help="Ignore creator daily skip state.")
+    parser.add_argument("--overwrite-output", action="store_true", help="Start a fresh output CSV instead of appending.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned inputs and exit.")
     return parser.parse_args()
 
@@ -218,6 +228,89 @@ def load_terms(path: str | None, defaults: list[str]) -> list[str]:
         for line in content.splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
+
+
+def load_existing_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {column: (row.get(column) or "") for column in CSV_COLUMNS}
+            for row in reader
+            if row.get("URL_TIKTOK")
+        ]
+
+
+def load_scrape_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"creators": {}}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        LOGGER.warning("Could not parse state file %s; starting with empty state.", path)
+        return {"creators": {}}
+
+
+def save_scrape_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def parse_state_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def creator_completed_recently(
+    state: dict[str, Any],
+    username: str,
+    skip_hours: float,
+) -> bool:
+    creator_state = state.get("creators", {}).get(username, {})
+    if creator_state.get("status") != "completed":
+        return False
+    completed_at = parse_state_timestamp(creator_state.get("completed_at"))
+    if completed_at is None:
+        return False
+    return datetime.now(timezone.utc) - completed_at < timedelta(hours=skip_hours)
+
+
+def order_creators_for_resume(creators: list[str], state: dict[str, Any], skip_hours: float) -> list[str]:
+    return sorted(
+        dict.fromkeys(creators),
+        key=lambda username: (
+            creator_completed_recently(state, username, skip_hours),
+            state.get("creators", {}).get(username, {}).get("completed_at") or "",
+            username,
+        ),
+    )
+
+
+def mark_creator_state(
+    state: dict[str, Any],
+    username: str,
+    status: str,
+    scanned: int = 0,
+    accepted: int = 0,
+    error: str | None = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    state.setdefault("creators", {})[username] = {
+        "status": status,
+        "last_run_at": now,
+        "completed_at": now if status == "completed" else None,
+        "scanned": scanned,
+        "accepted": accepted,
+        "error": error,
+    }
 
 
 def normalize_text(value: Any) -> str:
@@ -298,7 +391,7 @@ async def collect_creator_videos(
     username: str,
     count: int,
     args: argparse.Namespace,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+) -> tuple[list[dict[str, str]], list[dict[str, str]], int]:
     rows: list[dict[str, str]] = []
     rejects: list[dict[str, str]] = []
     scanned = 0
@@ -316,7 +409,7 @@ async def collect_creator_videos(
         elif args.debug_rejects:
             rejects.append(reject_row("creator", username, data))
     LOGGER.info("Creator done username=%s scanned=%s accepted=%s rejected=%s", username, scanned, len(rows), scanned - len(rows))
-    return rows, rejects
+    return rows, rejects, scanned
 
 
 async def collect_hashtag_videos(
@@ -424,7 +517,13 @@ def write_rejects(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 async def run_discovery(args: argparse.Namespace) -> list[dict[str, str]]:
-    creators = load_terms(args.creators_file, DEFAULT_CREATOR_USERNAMES)
+    state_path = Path(args.state_path)
+    state = load_scrape_state(state_path)
+    creators = order_creators_for_resume(
+        load_terms(args.creators_file, DEFAULT_CREATOR_USERNAMES),
+        state,
+        args.daily_skip_hours,
+    )
     hashtags = load_terms(args.hashtags_file, DEFAULT_HASHTAGS)
     queries = load_terms(args.queries_file, DEFAULT_USER_SEARCH_TERMS)
 
@@ -444,7 +543,14 @@ async def run_discovery(args: argparse.Namespace) -> list[dict[str, str]]:
     ms_tokens = [ms_token] if ms_token else None
     browser = os.getenv("TIKTOK_BROWSER", "chromium")
 
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, str]] = [] if args.overwrite_output else load_existing_rows(Path(args.output))
+    rows = dedupe_rows(rows, args.max_rows)
+    if rows:
+        LOGGER.info("Loaded %s existing output rows from %s", len(rows), args.output)
+    if len(rows) >= args.max_rows:
+        LOGGER.info("Output already has max_rows=%s rows; nothing to collect.", args.max_rows)
+        return rows
+
     rejects: list[dict[str, str]] = []
     async with TikTokApi() as api:
         if not ms_tokens:
@@ -474,12 +580,26 @@ async def run_discovery(args: argparse.Namespace) -> list[dict[str, str]]:
 
         if not args.skip_creators:
             for username in creators:
+                if not args.force_rescrape and creator_completed_recently(state, username, args.daily_skip_hours):
+                    LOGGER.info(
+                        "Skipping creator username=%s because it was completed within %.1f hours.",
+                        username,
+                        args.daily_skip_hours,
+                    )
+                    continue
+
+                scanned = 0
+                accepted = 0
                 try:
-                    found, rejected = await collect_creator_videos(api, username, args.per_creator, args)
+                    found, rejected, scanned = await collect_creator_videos(api, username, args.per_creator, args)
+                    accepted = len(found)
                     rows.extend(found)
                     rejects.extend(rejected)
-                except Exception:
+                    mark_creator_state(state, username, "completed", scanned=scanned, accepted=accepted)
+                except Exception as exc:
                     LOGGER.exception("Creator collection failed username=%s", username)
+                    mark_creator_state(state, username, "failed", scanned=scanned, accepted=accepted, error=str(exc))
+                save_scrape_state(state_path, state)
                 rows = dedupe_rows(rows, args.max_rows)
                 checkpoint_rows(args, rows)
                 if len(rows) >= args.max_rows:
@@ -510,12 +630,26 @@ async def run_discovery(args: argparse.Namespace) -> list[dict[str, str]]:
                 await sleep_between(args)
 
             for username in dict.fromkeys(discovered):
+                if not args.force_rescrape and creator_completed_recently(state, username, args.daily_skip_hours):
+                    LOGGER.info(
+                        "Skipping discovered creator username=%s because it was completed within %.1f hours.",
+                        username,
+                        args.daily_skip_hours,
+                    )
+                    continue
+
+                scanned = 0
+                accepted = 0
                 try:
-                    found, rejected = await collect_creator_videos(api, username, args.per_searched_user, args)
+                    found, rejected, scanned = await collect_creator_videos(api, username, args.per_searched_user, args)
+                    accepted = len(found)
                     rows.extend(found)
                     rejects.extend(rejected)
-                except Exception:
+                    mark_creator_state(state, username, "completed", scanned=scanned, accepted=accepted)
+                except Exception as exc:
                     LOGGER.exception("Discovered creator collection failed username=%s", username)
+                    mark_creator_state(state, username, "failed", scanned=scanned, accepted=accepted, error=str(exc))
+                save_scrape_state(state_path, state)
                 rows = dedupe_rows(rows, args.max_rows)
                 checkpoint_rows(args, rows)
                 if len(rows) >= args.max_rows:

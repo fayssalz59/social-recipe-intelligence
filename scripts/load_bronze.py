@@ -183,9 +183,9 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
             COALESCE(NULLIF(TRIM(PLATFORM), ''), 'tiktok') AS PLATFORM,
             NULLIF(TRIM(CONTENT_ID), '') AS CONTENT_ID,
             NULLIF(TRIM(CREATOR_USERNAME), '') AS CREATOR_USERNAME,
-            TITLE,
-            DESCRIPTION,
-            URL_TIKTOK,
+            NULLIF(TRIM(TITLE), '') AS TITLE,
+            NULLIF(TRIM(DESCRIPTION), '') AS DESCRIPTION,
+            NULLIF(TRIM(URL_TIKTOK), '') AS URL_TIKTOK,
             COALESCE(DESCRIPTION_IS_PARTIAL, FALSE) AS DESCRIPTION_IS_PARTIAL,
             SOURCE_FILE,
             OBJECT_CONSTRUCT_KEEP_NULL(
@@ -210,7 +210,32 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
         FROM {load_table}
         WHERE URL_TIKTOK IS NOT NULL
     ) AS src
-    ON tgt.RECORD_HASH = src.RECORD_HASH
+    ON (
+        src.CONTENT_ID IS NOT NULL
+        AND tgt.CONTENT_ID = src.CONTENT_ID
+        AND COALESCE(tgt.PLATFORM, 'tiktok') = src.PLATFORM
+    )
+    OR (
+        src.CONTENT_ID IS NULL
+        AND tgt.URL_TIKTOK = src.URL_TIKTOK
+    )
+    WHEN MATCHED THEN UPDATE SET
+        PLATFORM = src.PLATFORM,
+        CONTENT_ID = COALESCE(tgt.CONTENT_ID, src.CONTENT_ID),
+        CREATOR_USERNAME = COALESCE(NULLIF(tgt.CREATOR_USERNAME, ''), src.CREATOR_USERNAME),
+        TITLE = CASE
+            WHEN LENGTH(COALESCE(src.TITLE, '')) > LENGTH(COALESCE(tgt.TITLE, '')) THEN src.TITLE
+            ELSE tgt.TITLE
+        END,
+        DESCRIPTION = CASE
+            WHEN LENGTH(COALESCE(src.DESCRIPTION, '')) > LENGTH(COALESCE(tgt.DESCRIPTION, '')) THEN src.DESCRIPTION
+            ELSE tgt.DESCRIPTION
+        END,
+        DESCRIPTION_IS_PARTIAL = src.DESCRIPTION_IS_PARTIAL,
+        URL_TIKTOK = COALESCE(tgt.URL_TIKTOK, src.URL_TIKTOK),
+        SOURCE_FILE = src.SOURCE_FILE,
+        RAW_PAYLOAD = src.RAW_PAYLOAD,
+        RECORD_HASH = src.RECORD_HASH
     WHEN NOT MATCHED THEN INSERT (
         PLATFORM,
         CONTENT_ID,

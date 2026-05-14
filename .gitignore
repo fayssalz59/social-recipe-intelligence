@@ -22,3 +22,4 @@ desktop.ini
 # Generated scraper outputs
 data/raw/tiktok_recipe_discovery.csv
 data/raw/tiktok_recipe_discovery_rejected_debug.csv
+data/state/*.json

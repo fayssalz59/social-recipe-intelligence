@@ -6,6 +6,13 @@ select
     is_vegetarian,
     cuisine_style,
     main_ingredient,
+    ingredients,
+    is_recipe,
+    recipe_status,
+    has_ingredient_list,
+    has_instructions,
+    caption_completeness_score,
+    rejection_reason,
     processing_confidence as confidence,
     model_name,
     processed_at
