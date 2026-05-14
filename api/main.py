@@ -72,6 +72,11 @@ def list_recipes(
         IS_VEGETARIAN,
         CUISINE_STYLE,
         MAIN_INGREDIENT,
+        INGREDIENTS,
+        FINAL_RECIPE_TEXT,
+        RECIPE_STATUS,
+        RECIPE_QUALITY_SCORE,
+        RECIPE_QUALITY_GRADE,
         CONFIDENCE,
         PROCESSED_AT
     FROM {catalog_table}
@@ -153,6 +158,13 @@ def get_recipe(raw_id: int):
         IS_VEGETARIAN,
         CUISINE_STYLE,
         MAIN_INGREDIENT,
+        INGREDIENTS,
+        FINAL_RECIPE_TITLE,
+        FINAL_RECIPE_TEXT,
+        FINAL_RECIPE_JSON,
+        RECIPE_STATUS,
+        RECIPE_QUALITY_SCORE,
+        RECIPE_QUALITY_GRADE,
         CONFIDENCE,
         PROCESSED_AT
     FROM {catalog_table}

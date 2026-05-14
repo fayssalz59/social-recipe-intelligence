@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: stg_silver_tiktok_recipes
+    columns:
+      - name: raw_id
+        tests:
+          - not_null
+          - unique
+      - name: url_tiktok
+        tests:
+          - not_null
+      - name: recipe_status
+        tests:
+          - accepted_values:
+              values: ['full_recipe', 'partial_recipe', 'food_content', 'non_recipe']
+
+  - name: stg_silver_recipe_evidence
+    columns:
+      - name: raw_id
+        tests:
+          - not_null
+      - name: source_type
+        tests:
+          - accepted_values:
+              values:
+                - caption_original
+                - web_metadata
+                - oembed
+                - browser_dom
+                - video_ocr
+                - audio_transcript
+                - hashtags
+                - creator_context
+                - comments
+                - external_url
+
+  - name: gold_api_recipe_catalog
+    columns:
+      - name: id
+        tests:
+          - not_null
+          - unique
+      - name: url_tiktok
+        tests:
+          - not_null
+
+  - name: gold_tiktok_recipe_catalog
+    columns:
+      - name: raw_id
+        tests:
+          - not_null
+      - name: recipe_quality_score
+        tests:
+          - not_null

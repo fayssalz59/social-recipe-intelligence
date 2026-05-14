@@ -11,10 +11,18 @@ import requests
 from pydantic import BaseModel, Field, ValidationError
 
 from scripts.common import configure_logging, get_snowflake_connection, parse_json_strict
+from scripts.recipe_evidence_scoring import compute_recipe_evidence_score
+
+try:
+    from tqdm.auto import tqdm
+except ModuleNotFoundError:  # pragma: no cover - tqdm is a convenience dependency
+    def tqdm(iterable, **_: Any):  # type: ignore[no-redef]
+        return iterable
 
 LOGGER = configure_logging("enrich_silver")
 BRONZE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA_BRONZE", "BRONZE")
 SILVER_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA_SILVER", "SILVER")
+CONTROL_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA_CONTROL", "CONTROL")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
 
@@ -302,21 +310,65 @@ def normalize_llm_enrichment(enrichment_raw: Any) -> RecipeEnrichment:
         raise ValueError(f"Invalid LLM schema: {exc}") from exc
 
 
-def fetch_bronze_rows(limit: int, reprocess_all: bool = False) -> List[Dict[str, Any]]:
-    silver_filter = "" if reprocess_all else "AND s.RAW_ID IS NULL"
+def fetch_bronze_rows(
+    limit: int,
+    reprocess_all: bool = False,
+    only_recovered: bool = False,
+) -> List[Dict[str, Any]]:
+    if reprocess_all:
+        silver_filter = ""
+    elif only_recovered:
+        silver_filter = """
+        AND e.LATEST_EVIDENCE_AT IS NOT NULL
+        AND (
+            s.RAW_ID IS NULL
+            OR e.LATEST_EVIDENCE_AT >= COALESCE(s.PROCESSED_AT, '1900-01-01'::TIMESTAMP_NTZ)
+        )
+        """
+    else:
+        silver_filter = "AND s.RAW_ID IS NULL"
     query = f"""
+    WITH evidence AS (
+        SELECT
+            RAW_ID,
+            LISTAGG(EVIDENCE_TEXT, '\n\n') WITHIN GROUP (
+                ORDER BY EVIDENCE_QUALITY_SCORE DESC, CREATED_AT DESC
+            ) AS RECOVERY_TEXT,
+            MAX(EVIDENCE_QUALITY_SCORE) AS EVIDENCE_QUALITY_SCORE,
+            MAX(CREATED_AT) AS LATEST_EVIDENCE_AT
+        FROM {SILVER_SCHEMA}.SILVER_RECIPE_EVIDENCE
+        WHERE COALESCE(EVIDENCE_LENGTH, 0) > 0
+          AND COALESCE(EVIDENCE_QUALITY_SCORE, 0) >= 0.20
+        GROUP BY RAW_ID
+    )
     SELECT
         b.RAW_ID,
         b.TITLE,
         b.DESCRIPTION,
         COALESCE(NULLIF(b.RAW_PAYLOAD:original_description::STRING, ''), b.DESCRIPTION) AS ORIGINAL_DESCRIPTION,
-        NULLIF(b.RAW_PAYLOAD:recovered_text::STRING, '') AS RECOVERED_TEXT,
-        COALESCE(NULLIF(b.RAW_PAYLOAD:evidence_text::STRING, ''), b.DESCRIPTION) AS EVIDENCE_TEXT,
+        NULLIF(
+            CONCAT_WS(
+                '\n\n',
+                NULLIF(b.RAW_PAYLOAD:recovered_text::STRING, ''),
+                NULLIF(e.RECOVERY_TEXT, '')
+            ),
+            ''
+        ) AS RECOVERED_TEXT,
+        CONCAT_WS(
+            '\n\n',
+            COALESCE(NULLIF(b.RAW_PAYLOAD:original_description::STRING, ''), b.DESCRIPTION),
+            NULLIF(b.RAW_PAYLOAD:recovered_text::STRING, ''),
+            NULLIF(e.RECOVERY_TEXT, '')
+        ) AS EVIDENCE_TEXT,
+        COALESCE(e.EVIDENCE_QUALITY_SCORE, 0) AS EVIDENCE_QUALITY_SCORE,
+        e.LATEST_EVIDENCE_AT,
         b.URL_TIKTOK,
         b.RECORD_HASH
     FROM {BRONZE_SCHEMA}.BRONZE_TIKTOK_RECIPES b
     LEFT JOIN {SILVER_SCHEMA}.SILVER_TIKTOK_RECIPES s
         ON b.RAW_ID = s.RAW_ID
+    LEFT JOIN evidence e
+        ON b.RAW_ID = e.RAW_ID
     WHERE COALESCE(TRIM(b.DESCRIPTION), '') <> ''
       {silver_filter}
     ORDER BY b.INGESTED_AT ASC
@@ -338,6 +390,7 @@ def build_evidence_prompt(row: Dict[str, Any]) -> str:
         "original_caption": original_description,
         "recovered_text": recovered_text,
         "evidence_text": evidence_text,
+        "evidence_quality_score": row.get("EVIDENCE_QUALITY_SCORE", 0),
         "instruction": (
             "Analyze the evidence and produce structured metadata plus a clean final recipe. "
             "Only use facts present in original_caption, recovered_text, or evidence_text."
@@ -427,6 +480,7 @@ USING (
         %(original_description)s AS ORIGINAL_DESCRIPTION,
         %(recovered_text)s AS RECOVERED_TEXT,
         %(evidence_text)s AS EVIDENCE_TEXT,
+        %(evidence_quality_score)s AS EVIDENCE_QUALITY_SCORE,
         %(url_tiktok)s AS URL_TIKTOK,
         %(recipe_language)s AS RECIPE_LANGUAGE,
         %(is_vegetarian)s AS IS_VEGETARIAN,
@@ -456,6 +510,7 @@ WHEN MATCHED THEN UPDATE SET
     ORIGINAL_DESCRIPTION = source.ORIGINAL_DESCRIPTION,
     RECOVERED_TEXT = source.RECOVERED_TEXT,
     EVIDENCE_TEXT = source.EVIDENCE_TEXT,
+    EVIDENCE_QUALITY_SCORE = source.EVIDENCE_QUALITY_SCORE,
     URL_TIKTOK = source.URL_TIKTOK,
     RECIPE_LANGUAGE = source.RECIPE_LANGUAGE,
     IS_VEGETARIAN = source.IS_VEGETARIAN,
@@ -485,6 +540,7 @@ WHEN NOT MATCHED THEN INSERT (
     ORIGINAL_DESCRIPTION,
     RECOVERED_TEXT,
     EVIDENCE_TEXT,
+    EVIDENCE_QUALITY_SCORE,
     URL_TIKTOK,
     RECIPE_LANGUAGE,
     IS_VEGETARIAN,
@@ -513,6 +569,7 @@ WHEN NOT MATCHED THEN INSERT (
     source.ORIGINAL_DESCRIPTION,
     source.RECOVERED_TEXT,
     source.EVIDENCE_TEXT,
+    source.EVIDENCE_QUALITY_SCORE,
     source.URL_TIKTOK,
     source.RECIPE_LANGUAGE,
     source.IS_VEGETARIAN,
@@ -548,6 +605,8 @@ def upsert_silver_row(row: Dict[str, Any], enrichment: Dict[str, Any]) -> None:
         "original_description": row.get("ORIGINAL_DESCRIPTION") or row["DESCRIPTION"],
         "recovered_text": row.get("RECOVERED_TEXT") or "",
         "evidence_text": row.get("EVIDENCE_TEXT") or row["DESCRIPTION"],
+        "evidence_quality_score": row.get("EVIDENCE_QUALITY_SCORE")
+        or compute_recipe_evidence_score(row.get("EVIDENCE_TEXT") or row["DESCRIPTION"]),
         "url_tiktok": row["URL_TIKTOK"],
         "recipe_language": structured["lang"],
         "is_vegetarian": structured["is_veg"],
@@ -576,6 +635,42 @@ def upsert_silver_row(row: Dict[str, Any], enrichment: Dict[str, Any]) -> None:
         with conn.cursor() as cursor:
             cursor.execute(MERGE_SILVER_SQL, payload)
         conn.commit()
+    update_processing_queue_after_enrichment(row["RAW_ID"], structured)
+
+
+def update_processing_queue_after_enrichment(raw_id: Any, structured: dict[str, Any]) -> None:
+    recipe_status = structured.get("recipe_status", "food_content")
+    if recipe_status == "full_recipe":
+        status = "extracted_success"
+    elif recipe_status == "partial_recipe":
+        status = "extracted_partial"
+    elif structured.get("is_recipe", False):
+        status = "low_quality_rejected"
+    else:
+        status = "failed"
+
+    query = f"""
+    UPDATE {CONTROL_SCHEMA}.RECIPE_PROCESSING_QUEUE
+    SET
+        STATUS = %(status)s,
+        UPDATED_AT = CURRENT_TIMESTAMP(),
+        LAST_ERROR = IFF(%(status)s = 'failed', %(reason)s, NULL)
+    WHERE RAW_ID = %(raw_id)s
+    """
+    try:
+        with get_snowflake_connection(schema=CONTROL_SCHEMA) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    query,
+                    {
+                        "raw_id": raw_id,
+                        "status": status,
+                        "reason": structured.get("rejection_reason", ""),
+                    },
+                )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("Processing queue update skipped for RAW_ID=%s: %s", raw_id, exc)
 
 
 def ensure_silver_schema() -> None:
@@ -584,6 +679,7 @@ def ensure_silver_schema() -> None:
         "INGREDIENTS": "VARIANT",
         "RECOVERED_TEXT": "STRING",
         "EVIDENCE_TEXT": "STRING",
+        "EVIDENCE_QUALITY_SCORE": "FLOAT DEFAULT 0",
         "IS_RECIPE": "BOOLEAN DEFAULT TRUE",
         "RECIPE_STATUS": "STRING DEFAULT 'partial_recipe'",
         "HAS_INGREDIENT_LIST": "BOOLEAN DEFAULT FALSE",
@@ -607,6 +703,59 @@ def ensure_silver_schema() -> None:
         conn.commit()
 
 
+def ensure_recovery_schema() -> None:
+    table_name = f"{SILVER_SCHEMA}.RECIPE_CONTENT_RECOVERY"
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        RECOVERY_ID NUMBER AUTOINCREMENT START 1 INCREMENT 1,
+        RAW_ID NUMBER,
+        URL_TIKTOK STRING,
+        CONTENT_ID STRING,
+        METHOD STRING,
+        RECOVERED_TEXT STRING,
+        TEXT_LENGTH NUMBER,
+        LANGUAGE_HINT STRING,
+        CONFIDENCE FLOAT,
+        ENGINE STRING,
+        STATUS STRING,
+        ERROR_MESSAGE STRING,
+        SOURCE_DETAILS VARIANT,
+        RECORD_HASH STRING,
+        CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+    )
+    """
+    with get_snowflake_connection(schema=SILVER_SCHEMA) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(create_sql)
+        conn.commit()
+
+
+def ensure_evidence_schema() -> None:
+    table_name = f"{SILVER_SCHEMA}.SILVER_RECIPE_EVIDENCE"
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        EVIDENCE_ID NUMBER AUTOINCREMENT START 1 INCREMENT 1,
+        RAW_ID NUMBER,
+        CONTENT_ID STRING,
+        URL_TIKTOK STRING,
+        SOURCE_TYPE STRING,
+        SOURCE_NAME STRING,
+        EVIDENCE_TEXT STRING,
+        EVIDENCE_LENGTH NUMBER,
+        EVIDENCE_QUALITY_SCORE FLOAT,
+        EVIDENCE_QUALITY_CLASS STRING,
+        IS_RECIPE_SIGNAL BOOLEAN,
+        SOURCE_DETAILS VARIANT,
+        RECORD_HASH STRING,
+        CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+    )
+    """
+    with get_snowflake_connection(schema=SILVER_SCHEMA) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(create_sql)
+        conn.commit()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Enrich Bronze records and load into Silver.")
     parser.add_argument("--limit", type=int, default=100, help="Maximum number of records to process.")
@@ -620,22 +769,34 @@ def main() -> None:
         action="store_true",
         help="Re-enrich Bronze rows even if they already exist in Silver. The Silver MERGE updates existing rows.",
     )
+    parser.add_argument(
+        "--only-recovered",
+        action="store_true",
+        help="Only re-enrich rows with new Silver evidence collected after the last Silver processing time.",
+    )
     args = parser.parse_args()
 
     ensure_silver_schema()
-    rows = fetch_bronze_rows(limit=args.limit, reprocess_all=args.reprocess_all)
+    ensure_recovery_schema()
+    ensure_evidence_schema()
+    rows = fetch_bronze_rows(
+        limit=args.limit,
+        reprocess_all=args.reprocess_all,
+        only_recovered=args.only_recovered,
+    )
     if not rows:
         LOGGER.info("No Bronze records found for the selected mode.")
         return
 
     LOGGER.info(
-        "Found %s Bronze rows to enrich. reprocess_all=%s",
+        "Found %s Bronze rows to enrich. reprocess_all=%s only_recovered=%s",
         len(rows),
         args.reprocess_all,
+        args.only_recovered,
     )
 
     with requests.Session() as session:
-        for row in rows:
+        for row in tqdm(rows, desc="Enriching Silver", unit="row"):
             try:
                 enrichment = ask_openrouter(row, session=session)
 
@@ -649,7 +810,6 @@ def main() -> None:
                     continue
 
                 upsert_silver_row(row, enrichment)
-                LOGGER.info("Processed RAW_ID=%s URL=%s", row["RAW_ID"], row["URL_TIKTOK"])
 
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Failed to enrich RAW_ID=%s: %s", row["RAW_ID"], exc)

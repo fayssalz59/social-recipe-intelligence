@@ -18,10 +18,26 @@ load_dotenv(BASE_DIR / ".env", override=True)
 
 def configure_logging(name: str) -> logging.Logger:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    snowflake_log_level = os.getenv("SNOWFLAKE_LOG_LEVEL", "WARNING").upper()
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
+    for logger_name in [
+        "snowflake.connector",
+        "snowflake.connector.connection",
+        "snowflake.connector.cursor",
+        "snowflake.connector.network",
+    ]:
+        logging.getLogger(logger_name).setLevel(snowflake_log_level)
+    for noisy_logger_name in [
+        "httpx",
+        "httpcore",
+        "faster_whisper",
+        "easyocr",
+        "easyocr.easyocr",
+    ]:
+        logging.getLogger(noisy_logger_name).setLevel(os.getenv("DEPENDENCY_LOG_LEVEL", "WARNING").upper())
     return logging.getLogger(name)
 
 

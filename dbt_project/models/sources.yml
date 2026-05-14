@@ -6,3 +6,4 @@ sources:
     schema: "{{ env_var('SNOWFLAKE_SCHEMA_SILVER', 'SILVER') }}"
     tables:
       - name: SILVER_TIKTOK_RECIPES
+      - name: SILVER_RECIPE_EVIDENCE

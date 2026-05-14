@@ -257,28 +257,43 @@ def load_catalog() -> pd.DataFrame:
     query = f"""
     SELECT
         RAW_ID,
+        CONTENT_KEY,
         DISPLAY_TITLE,
         ORIGINAL_DESCRIPTION,
         RECOVERED_TEXT,
         EVIDENCE_TEXT,
+        BEST_EVIDENCE_TEXT,
         URL_TIKTOK,
         RECIPE_LANGUAGE,
         IS_VEGETARIAN,
         CUISINE_STYLE,
         MAIN_INGREDIENT,
         INGREDIENTS,
+        INGREDIENT_COUNT,
         IS_RECIPE,
         RECIPE_STATUS,
         HAS_INGREDIENT_LIST,
         HAS_INSTRUCTIONS,
         CAPTION_COMPLETENESS_SCORE,
+        EVIDENCE_QUALITY_SCORE,
+        BEST_EVIDENCE_QUALITY_SCORE,
+        AVG_EVIDENCE_QUALITY_SCORE,
+        EVIDENCE_SOURCE_COUNT,
+        OCR_SOURCE_COUNT,
+        AUDIO_SOURCE_COUNT,
+        COMMENT_SOURCE_COUNT,
+        RECIPE_SIGNAL_COUNT,
         REJECTION_REASON,
         FINAL_RECIPE_TITLE,
         FINAL_RECIPE_TEXT,
         FINAL_RECIPE_JSON,
+        STEP_COUNT,
         MISSING_RECIPE_INFO,
+        MISSING_INFO_COUNT,
         FINAL_RECIPE_CONFIDENCE,
         FINAL_RECIPE_LANGUAGE,
+        RECIPE_QUALITY_SCORE,
+        RECIPE_QUALITY_GRADE,
         PROCESSING_CONFIDENCE,
         MODEL_NAME,
         PROCESSED_AT
@@ -314,6 +329,35 @@ def load_layer_counts() -> pd.DataFrame:
     """
     try:
         return query_snowflake(query)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_recovery_counts() -> pd.DataFrame:
+    database = os.getenv("SNOWFLAKE_DB", "TIKTOK_PORTFOLIO_DB")
+    silver = os.getenv("SNOWFLAKE_SCHEMA_SILVER", "SILVER")
+    query = f"""
+    SELECT
+        SOURCE_TYPE AS METHOD,
+        EVIDENCE_QUALITY_CLASS AS STATUS,
+        COUNT(*) AS RECORDS,
+        AVG(EVIDENCE_QUALITY_SCORE) AS AVG_CONFIDENCE,
+        AVG(EVIDENCE_LENGTH) AS AVG_TEXT_LENGTH
+    FROM {database}.{silver}.SILVER_RECIPE_EVIDENCE
+    GROUP BY SOURCE_TYPE, EVIDENCE_QUALITY_CLASS
+    ORDER BY RECORDS DESC
+    """
+    try:
+        return query_snowflake(query)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_data_quality_daily() -> pd.DataFrame:
+    try:
+        return query_snowflake(f"SELECT * FROM {gold_table_name('GOLD_DATA_QUALITY_DAILY')}")
     except Exception:
         return pd.DataFrame()
 
@@ -580,6 +624,8 @@ def render_result_card(row: pd.Series) -> None:
     title = safe_scalar(row.get("DISPLAY_TITLE"), "Untitled recipe")
     url = safe_scalar(row.get("URL_TIKTOK"), "#")
     confidence = row.get("PROCESSING_CONFIDENCE", 0)
+    quality = row.get("RECIPE_QUALITY_SCORE", confidence)
+    grade = safe_scalar(row.get("RECIPE_QUALITY_GRADE"), "D")
     model = safe_scalar(row.get("MODEL_NAME"))
     dietary = "Vegetarian" if is_true(row.get("IS_VEGETARIAN")) else "Non-vegetarian"
     recipe_status = safe_scalar(row.get("RECIPE_STATUS"), "unknown")
@@ -602,13 +648,14 @@ def render_result_card(row: pd.Series) -> None:
                         f"<span class='pill'>{language}</span>",
                         f"<span class='pill'>{dietary}</span>",
                         f"<span class='pill'>{recipe_status}</span>",
+                        f"<span class='pill'>quality {grade}</span>",
                     ]
                 ),
                 unsafe_allow_html=True,
             )
             st.markdown(
                 "<div class='result-meta'>"
-                f"Confidence {confidence:.2f} | Completeness {completeness:.2f} | "
+                f"Quality {quality:.2f} | Confidence {confidence:.2f} | Completeness {completeness:.2f} | "
                 f"Recipe confidence {final_confidence:.2f} | "
                 f"Model {model} | Processed {safe_scalar(row.get('PROCESSED_AT'))}"
                 "</div>",
@@ -623,6 +670,10 @@ def render_result_card(row: pd.Series) -> None:
                 if recovered_text:
                     st.markdown("**Recovered text**")
                     st.write(recovered_text)
+                best_evidence_text = safe_scalar(row.get("BEST_EVIDENCE_TEXT"), "")
+                if best_evidence_text:
+                    st.markdown("**Best scored evidence**")
+                    st.write(best_evidence_text)
         with action_col:
             if url.startswith("http"):
                 st.link_button("Open", url, use_container_width=True)
@@ -668,7 +719,7 @@ def render_search_browser(df: pd.DataFrame) -> None:
     with control_col_1:
         min_confidence = st.slider("Minimum confidence", 0.0, 1.0, 0.0, 0.05)
     with control_col_2:
-        sort_mode = st.selectbox("Sort by", ["Newest", "Highest confidence", "Lowest confidence", "Title A-Z"])
+        sort_mode = st.selectbox("Sort by", ["Newest", "Highest quality", "Highest confidence", "Lowest confidence", "Title A-Z"])
     with control_col_3:
         result_limit = st.selectbox("Results", [12, 24, 48, 96], index=1)
 
@@ -682,7 +733,9 @@ def render_search_browser(df: pd.DataFrame) -> None:
         min_confidence=min_confidence,
     )
 
-    if sort_mode == "Highest confidence":
+    if sort_mode == "Highest quality" and "RECIPE_QUALITY_SCORE" in results:
+        results = results.sort_values("RECIPE_QUALITY_SCORE", ascending=False)
+    elif sort_mode == "Highest confidence":
         results = results.sort_values("PROCESSING_CONFIDENCE", ascending=False)
     elif sort_mode == "Lowest confidence":
         results = results.sort_values("PROCESSING_CONFIDENCE", ascending=True)
@@ -696,8 +749,8 @@ def render_search_browser(df: pd.DataFrame) -> None:
     metric_col_2.metric("Cuisines", f"{results['CUISINE_STYLE'].nunique() if not results.empty else 0}")
     metric_col_3.metric("Ingredients", f"{results['MAIN_INGREDIENT'].nunique() if not results.empty else 0}")
     metric_col_4.metric(
-        "Avg confidence",
-        f"{results['PROCESSING_CONFIDENCE'].mean():.2f}" if not results.empty else "0.00",
+        "Avg quality",
+        f"{results['RECIPE_QUALITY_SCORE'].mean():.2f}" if not results.empty and "RECIPE_QUALITY_SCORE" in results else "0.00",
     )
 
     st.markdown(
@@ -873,6 +926,16 @@ def render_quality(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
         st.subheader("Warehouse layer counts")
         st.dataframe(layer_counts, use_container_width=True, hide_index=True)
 
+    daily_quality = load_data_quality_daily()
+    if not daily_quality.empty:
+        st.subheader("Gold data quality daily")
+        st.dataframe(daily_quality, use_container_width=True, hide_index=True)
+
+    recovery_counts = load_recovery_counts()
+    if not recovery_counts.empty:
+        st.subheader("Recipe evidence sources")
+        st.dataframe(recovery_counts, use_container_width=True, hide_index=True)
+
     st.subheader("Enrichment quality")
     text_columns = ["RECIPE_LANGUAGE", "CUISINE_STYLE", "MAIN_INGREDIENT"]
     quality_rows = []
@@ -890,6 +953,9 @@ def render_quality(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
     st.dataframe(pd.DataFrame(quality_rows), use_container_width=True, hide_index=True)
 
     low_confidence = filtered[filtered["PROCESSING_CONFIDENCE"].fillna(0) < 0.75]
+    if "RECIPE_QUALITY_SCORE" in filtered:
+        low_quality = filtered[filtered["RECIPE_QUALITY_SCORE"].fillna(0) < 0.60]
+        st.metric("Low quality records", f"{len(low_quality):,}")
     if "FINAL_RECIPE_CONFIDENCE" in filtered:
         weak_final_recipes = filtered[filtered["FINAL_RECIPE_CONFIDENCE"].fillna(0) < 0.65]
         st.metric("Weak final recipe cards", f"{len(weak_final_recipes):,}")
@@ -961,13 +1027,17 @@ def main() -> None:
 
     df["PROCESSED_AT"] = pd.to_datetime(df["PROCESSED_AT"], errors="coerce")
     df["PROCESSING_CONFIDENCE"] = pd.to_numeric(df["PROCESSING_CONFIDENCE"], errors="coerce")
+    if "RECIPE_QUALITY_SCORE" in df:
+        df["RECIPE_QUALITY_SCORE"] = pd.to_numeric(df["RECIPE_QUALITY_SCORE"], errors="coerce").fillna(0)
+    if "BEST_EVIDENCE_QUALITY_SCORE" in df:
+        df["BEST_EVIDENCE_QUALITY_SCORE"] = pd.to_numeric(df["BEST_EVIDENCE_QUALITY_SCORE"], errors="coerce").fillna(0)
     if "CAPTION_COMPLETENESS_SCORE" in df:
         df["CAPTION_COMPLETENESS_SCORE"] = pd.to_numeric(df["CAPTION_COMPLETENESS_SCORE"], errors="coerce").fillna(0)
     if "RECIPE_STATUS" in df:
         df["RECIPE_STATUS"] = df["RECIPE_STATUS"].fillna("unknown")
     if "FINAL_RECIPE_CONFIDENCE" in df:
         df["FINAL_RECIPE_CONFIDENCE"] = pd.to_numeric(df["FINAL_RECIPE_CONFIDENCE"], errors="coerce").fillna(0)
-    for text_column in ["FINAL_RECIPE_TEXT", "ORIGINAL_DESCRIPTION", "RECOVERED_TEXT"]:
+    for text_column in ["FINAL_RECIPE_TEXT", "ORIGINAL_DESCRIPTION", "RECOVERED_TEXT", "BEST_EVIDENCE_TEXT"]:
         if text_column in df:
             df[text_column] = df[text_column].fillna("")
     df["MODEL_NAME"] = df.get("MODEL_NAME", pd.Series(["unknown"] * len(df))).fillna("unknown")

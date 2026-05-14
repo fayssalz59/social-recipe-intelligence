@@ -160,6 +160,23 @@ services:
       - kafka
       - postgres
 
+  recipe-content-recovery:
+    profiles: ["recovery"]
+    build:
+      context: ..
+      dockerfile: docker/content-recovery/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ..:/app
+      - recovery-cache:/root/.cache
+    networks:
+      - data-network
+    depends_on:
+      - postgres
+
 networks:
   data-network:
     driver: bridge
@@ -169,3 +186,4 @@ volumes:
   portainer-data:
   airflow-logs:
   airflow-plugins:
+  recovery-cache:
