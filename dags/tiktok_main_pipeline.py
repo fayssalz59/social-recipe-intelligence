@@ -40,7 +40,7 @@ def tiktok_recipe_pipeline():
         task_id="adaptive_recovery_task",
         bash_command=(
             f"cd {REPO_ROOT}/docker && "
-            "docker compose --profile recovery run --rm recipe-content-recovery "
+            "COMPOSE_PROFILES=recovery docker compose run --rm recipe-content-recovery "
             "python -u -m scripts.recover_recipe_content --method adaptive --limit 100"
         ),
     )
