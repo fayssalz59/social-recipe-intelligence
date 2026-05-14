@@ -119,6 +119,9 @@ def ensure_load_objects(
             DESCRIPTION_IS_PARTIAL BOOLEAN,
             DATA_ORIGIN STRING,
             VERIFICATION_SOURCE_URL STRING,
+            DESCRIPTION_SOURCE STRING,
+            DESCRIPTION_LENGTH STRING,
+            DESCRIPTION_ENRICHED STRING,
             SOURCE_FILE STRING
         );
         """
@@ -147,6 +150,9 @@ def copy_stage_to_load_table(
         DESCRIPTION_IS_PARTIAL,
         DATA_ORIGIN,
         VERIFICATION_SOURCE_URL,
+        DESCRIPTION_SOURCE,
+        DESCRIPTION_LENGTH,
+        DESCRIPTION_ENRICHED,
         SOURCE_FILE
     )
     FROM (
@@ -164,6 +170,9 @@ def copy_stage_to_load_table(
             TRY_TO_BOOLEAN($11::STRING) AS DESCRIPTION_IS_PARTIAL,
             $12::STRING AS DATA_ORIGIN,
             $13::STRING AS VERIFICATION_SOURCE_URL,
+            $14::STRING AS DESCRIPTION_SOURCE,
+            $15::STRING AS DESCRIPTION_LENGTH,
+            $16::STRING AS DESCRIPTION_ENRICHED,
             METADATA$FILENAME::STRING AS SOURCE_FILE
         FROM {stage_name}
     )
@@ -198,7 +207,10 @@ def merge_load_into_bronze(cursor, load_table: str, bronze_table: str) -> None:
                 'main_ingredient_hint', MAIN_INGREDIENT_HINT,
                 'description_is_partial', DESCRIPTION_IS_PARTIAL,
                 'data_origin', DATA_ORIGIN,
-                'verification_source_url', VERIFICATION_SOURCE_URL
+                'verification_source_url', VERIFICATION_SOURCE_URL,
+                'description_source', DESCRIPTION_SOURCE,
+                'description_length', DESCRIPTION_LENGTH,
+                'description_enriched', DESCRIPTION_ENRICHED
             ) AS RAW_PAYLOAD,
             SHA2(
                 COALESCE(TRIM(PLATFORM), 'tiktok') || '|' ||

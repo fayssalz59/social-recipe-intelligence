@@ -140,6 +140,15 @@ python -m scripts.enrich_silver --limit 100
 python run_dbt.py run
 ```
 
+Run TikTok discovery with resume state, creator-level daily skipping, and caption enrichment:
+
+```bash
+cd docker
+docker compose run --no-deps --rm tiktok-monitor bash -lc "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > /tmp/xvfb.log 2>&1 & export DISPLAY=:99; python -u -m scripts.tiktok_recipe_discovery --session-timeout 180 --max-rows 500 --per-creator 10 --sleep-min 12 --sleep-max 20 --caption-enrichment metadata"
+```
+
+For slower but more aggressive caption recovery, use `--caption-enrichment browser`. The scraper first uses TikTokApi captions, then tries TikTok web metadata, embedded JSON, oEmbed, and optional Playwright DOM extraction. It keeps the longest useful caption and records the source in Bronze `RAW_PAYLOAD`.
+
 Run the Spark job from Docker:
 
 ```bash

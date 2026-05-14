@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import html
 import json
 import logging
 import os
@@ -11,6 +12,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+import requests
 
 try:
     from dotenv import load_dotenv
@@ -21,6 +24,11 @@ try:
     from TikTokApi import TikTokApi
 except ModuleNotFoundError:  # pragma: no cover - checked at runtime for real discovery
     TikTokApi = None
+
+try:
+    from playwright.async_api import async_playwright
+except ModuleNotFoundError:  # pragma: no cover - optional heavy caption fallback
+    async_playwright = None
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +50,9 @@ CSV_COLUMNS = [
     "DESCRIPTION_IS_PARTIAL",
     "DATA_ORIGIN",
     "VERIFICATION_SOURCE_URL",
+    "DESCRIPTION_SOURCE",
+    "DESCRIPTION_LENGTH",
+    "DESCRIPTION_ENRICHED",
 ]
 
 DEFAULT_CREATOR_USERNAMES = [
@@ -208,6 +219,32 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--force-rescrape", action="store_true", help="Ignore creator daily skip state.")
     parser.add_argument("--overwrite-output", action="store_true", help="Start a fresh output CSV instead of appending.")
+    parser.add_argument(
+        "--caption-enrichment",
+        choices=["off", "metadata", "browser"],
+        default="metadata",
+        help=(
+            "Try to improve captions after TikTokApi collection. "
+            "'metadata' uses TikTok web/oEmbed JSON. 'browser' also allows future Playwright DOM fallback."
+        ),
+    )
+    parser.add_argument(
+        "--caption-min-length",
+        type=int,
+        default=160,
+        help="Only enrich captions shorter than this many characters unless --caption-enrich-all is set.",
+    )
+    parser.add_argument(
+        "--caption-enrich-all",
+        action="store_true",
+        help="Try caption enrichment for every accepted video, even when TikTokApi already returned a long caption.",
+    )
+    parser.add_argument(
+        "--caption-request-timeout",
+        type=float,
+        default=12.0,
+        help="HTTP timeout in seconds for web metadata caption enrichment.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print planned inputs and exit.")
     return parser.parse_args()
 
@@ -317,6 +354,15 @@ def normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def normalize_caption(value: Any) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"\\u([0-9a-fA-F]{4})", lambda match: chr(int(match.group(1), 16)), text)
+    text = text.replace("\\n", "\n").replace("\\/", "/")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def infer_language(text: str) -> str:
     lowered = text.lower()
     for language, markers in LANGUAGE_HINTS.items():
@@ -339,7 +385,7 @@ def extract_video_fields(
     disable_caption_filter: bool = False,
 ) -> dict[str, str] | None:
     video_id = normalize_text(data.get("id"))
-    description = normalize_text(data.get("desc"))
+    description = normalize_caption(data.get("desc"))
     if not video_id or not description:
         return None
     if not disable_caption_filter and not is_recipe_caption(description):
@@ -377,7 +423,251 @@ def extract_video_fields(
         "DESCRIPTION_IS_PARTIAL": "true",
         "DATA_ORIGIN": "tiktokapi_discovery",
         "VERIFICATION_SOURCE_URL": url if not published_at else f"{url}?published_at={published_at}",
+        "DESCRIPTION_SOURCE": "tiktokapi_desc",
+        "DESCRIPTION_LENGTH": str(len(description)),
+        "DESCRIPTION_ENRICHED": "false",
     }
+
+
+def collect_caption_candidates(payload: Any, video_id: str) -> list[str]:
+    candidates: list[str] = []
+    if isinstance(payload, dict):
+        id_hint = str(
+            payload.get("id")
+            or payload.get("itemId")
+            or payload.get("aweme_id")
+            or payload.get("video_id")
+            or ""
+        )
+        for key, value in payload.items():
+            lowered_key = str(key).lower()
+            if lowered_key in {"desc", "description", "title", "caption"} and isinstance(value, str):
+                if not id_hint or not video_id or id_hint == video_id or len(value) >= 80:
+                    candidates.append(normalize_caption(value))
+            candidates.extend(collect_caption_candidates(value, video_id))
+    elif isinstance(payload, list):
+        for item in payload:
+            candidates.extend(collect_caption_candidates(item, video_id))
+    return candidates
+
+
+def strip_html_tags(value: str) -> str:
+    without_scripts = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", value, flags=re.DOTALL | re.IGNORECASE)
+    without_tags = re.sub(r"<[^>]+>", " ", without_scripts)
+    return normalize_caption(without_tags)
+
+
+def extract_json_script(html_text: str, script_id: str) -> Any | None:
+    pattern = rf'<script[^>]+id=["\']{re.escape(script_id)}["\'][^>]*>(.*?)</script>'
+    match = re.search(pattern, html_text, flags=re.DOTALL | re.IGNORECASE)
+    if not match:
+        return None
+    raw = html.unescape(match.group(1)).strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def extract_meta_content(html_text: str) -> list[str]:
+    candidates: list[str] = []
+    patterns = [
+        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\'](.*?)["\']',
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']',
+        r'<meta[^>]+content=["\'](.*?)["\'][^>]+property=["\']og:description["\']',
+        r'<meta[^>]+content=["\'](.*?)["\'][^>]+name=["\']description["\']',
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, html_text, flags=re.DOTALL | re.IGNORECASE):
+            candidates.append(normalize_caption(match.group(1)))
+    return candidates
+
+
+def looks_like_real_caption(candidate: str, existing: str) -> bool:
+    if not candidate:
+        return False
+    lowered = candidate.lower()
+    boilerplate = [
+        "tiktok video",
+        "watch the latest videos",
+        "discover videos related",
+        "log in to follow creators",
+    ]
+    if any(text in lowered for text in boilerplate):
+        return False
+    if existing and candidate == existing:
+        return False
+    return len(candidate) >= max(40, len(existing) + 15)
+
+
+def choose_best_caption(candidates: Iterable[str], existing: str) -> tuple[str, str] | None:
+    cleaned = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        caption = normalize_caption(candidate)
+        if not looks_like_real_caption(caption, existing) or caption in seen:
+            continue
+        seen.add(caption)
+        cleaned.append(caption)
+    if not cleaned:
+        return None
+    cleaned.sort(
+        key=lambda caption: (
+            is_recipe_caption(caption),
+            len(caption),
+        ),
+        reverse=True,
+    )
+    return cleaned[0], "web_metadata"
+
+
+def fetch_oembed_caption(url: str, timeout: float) -> list[str]:
+    endpoint = "https://www.tiktok.com/oembed"
+    headers = {
+        "User-Agent": os.getenv(
+            "TIKTOK_HTTP_USER_AGENT",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+    }
+    try:
+        response = requests.get(endpoint, params={"url": url}, headers=headers, timeout=timeout)
+        if not response.ok:
+            return []
+        data = response.json()
+    except Exception:
+        return []
+    return [
+        normalize_caption(data.get("title")),
+        strip_html_tags(str(data.get("html") or "")),
+    ]
+
+
+def fetch_web_caption(url: str, video_id: str, existing: str, timeout: float) -> tuple[str, str] | None:
+    headers = {
+        "User-Agent": os.getenv(
+            "TIKTOK_HTTP_USER_AGENT",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        ),
+        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8,es;q=0.7,it;q=0.6,pt;q=0.5,ar;q=0.4",
+    }
+    candidates: list[str] = []
+
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        if response.ok:
+            page = response.text
+            candidates.extend(extract_meta_content(page))
+            for script_id in ("SIGI_STATE", "__UNIVERSAL_DATA_FOR_REHYDRATION__"):
+                payload = extract_json_script(page, script_id)
+                if payload is not None:
+                    candidates.extend(collect_caption_candidates(payload, video_id))
+    except Exception:
+        LOGGER.debug("Web caption fetch failed for url=%s", url, exc_info=True)
+
+    candidates.extend(fetch_oembed_caption(url, timeout=timeout))
+    return choose_best_caption(candidates, existing)
+
+
+async def fetch_browser_caption(
+    url: str,
+    video_id: str,
+    existing: str,
+    timeout: float,
+    headless: bool,
+) -> tuple[str, str] | None:
+    if async_playwright is None:
+        return None
+
+    candidates: list[str] = []
+    browser = None
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=headless)
+            page = await browser.new_page(
+                user_agent=os.getenv(
+                    "TIKTOK_HTTP_USER_AGENT",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                ),
+                locale="en-US",
+            )
+            await page.goto(url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+            await page.wait_for_timeout(2500)
+            page_html = await page.content()
+            candidates.extend(extract_meta_content(page_html))
+            for script_id in ("SIGI_STATE", "__UNIVERSAL_DATA_FOR_REHYDRATION__"):
+                payload = extract_json_script(page_html, script_id)
+                if payload is not None:
+                    candidates.extend(collect_caption_candidates(payload, video_id))
+
+            dom_text_candidates = await page.locator('[data-e2e*="browse-video-desc"], [data-e2e*="video-desc"]').all_inner_texts()
+            candidates.extend(dom_text_candidates)
+    except Exception:
+        LOGGER.debug("Browser caption fetch failed for url=%s", url, exc_info=True)
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+
+    chosen = choose_best_caption(candidates, existing)
+    if chosen:
+        return chosen[0], "browser_dom"
+    return None
+
+
+async def enrich_row_caption(row: dict[str, str], args: argparse.Namespace) -> dict[str, str]:
+    if args.caption_enrichment == "off":
+        return row
+    existing = row.get("DESCRIPTION", "")
+    should_enrich = args.caption_enrich_all or len(existing) < args.caption_min_length
+    if not should_enrich:
+        return row
+
+    result = await asyncio.to_thread(
+        fetch_web_caption,
+        row["URL_TIKTOK"],
+        row.get("CONTENT_ID", ""),
+        existing,
+        args.caption_request_timeout,
+    )
+    if not result:
+        if args.caption_enrichment == "browser":
+            result = await fetch_browser_caption(
+                row["URL_TIKTOK"],
+                row.get("CONTENT_ID", ""),
+                existing,
+                args.caption_request_timeout,
+                args.headless,
+            )
+    if not result:
+        return row
+
+    caption, source = result
+    if len(caption) <= len(existing):
+        return row
+
+    LOGGER.info(
+        "Caption enriched content_id=%s old_len=%s new_len=%s source=%s",
+        row.get("CONTENT_ID"),
+        len(existing),
+        len(caption),
+        source,
+    )
+    row["DESCRIPTION"] = caption
+    row["TITLE"] = caption[:120]
+    row["RECIPE_LANGUAGE_HINT"] = infer_language(caption)
+    row["DESCRIPTION_IS_PARTIAL"] = "false" if len(caption) >= args.caption_min_length else "true"
+    row["DATA_ORIGIN"] = f"{row.get('DATA_ORIGIN') or 'tiktokapi_discovery'}+caption_enrichment"
+    row["DESCRIPTION_SOURCE"] = source
+    row["DESCRIPTION_LENGTH"] = str(len(caption))
+    row["DESCRIPTION_ENRICHED"] = "true"
+    return row
 
 
 async def sleep_between(args: argparse.Namespace) -> None:
@@ -402,9 +692,11 @@ async def collect_creator_videos(
         row = extract_video_fields(
             data,
             fallback_creator=username,
-            disable_caption_filter=args.disable_caption_filter,
+            disable_caption_filter=True,
         )
         if row:
+            row = await enrich_row_caption(row, args)
+        if row and (args.disable_caption_filter or is_recipe_caption(row["DESCRIPTION"])):
             rows.append(row)
         elif args.debug_rejects:
             rejects.append(reject_row("creator", username, data))
@@ -426,8 +718,10 @@ async def collect_hashtag_videos(
     async for video in api.hashtag(name=clean_hashtag).videos(count=count):
         scanned += 1
         data = getattr(video, "as_dict", {}) or {}
-        row = extract_video_fields(data, disable_caption_filter=args.disable_caption_filter)
+        row = extract_video_fields(data, disable_caption_filter=True)
         if row:
+            row = await enrich_row_caption(row, args)
+        if row and (args.disable_caption_filter or is_recipe_caption(row["DESCRIPTION"])):
             rows.append(row)
         elif args.debug_rejects:
             rejects.append(reject_row("hashtag", clean_hashtag, data))
