@@ -46,9 +46,28 @@ SYSTEM_PROMPT = (
 
 class RecipeEnrichment(BaseModel):
     lang: str = Field(default="unknown")
-    is_veg: bool = Field(default=False)
+    is_veg: bool | None = Field(default=False)
     cuisine: str = Field(default="unknown")
     ingredient: str = Field(default="unknown")
+
+
+def coerce_nullable_bool(value: Any) -> bool | None:
+    """Normalize common LLM boolean variants without failing the whole row."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "y", "1", "vegetarian", "veg", "végétarien"}:
+            return True
+        if normalized in {"false", "no", "n", "0", "non-vegetarian", "non vegetarian", "not vegetarian"}:
+            return False
+        if normalized in {"unknown", "null", "none", "n/a", "na", "unclear", ""}:
+            return None
+    return None
 
 
 def normalize_llm_enrichment(enrichment_raw: Any) -> RecipeEnrichment:
@@ -68,7 +87,9 @@ def normalize_llm_enrichment(enrichment_raw: Any) -> RecipeEnrichment:
 
     normalized_payload = {
         "lang": enrichment_payload.get("lang", enrichment_payload.get("recipe_language", "unknown")),
-        "is_veg": enrichment_payload.get("is_veg", enrichment_payload.get("is_vegetarian", False)),
+        "is_veg": coerce_nullable_bool(
+            enrichment_payload.get("is_veg", enrichment_payload.get("is_vegetarian", False))
+        ),
         "cuisine": enrichment_payload.get("cuisine", enrichment_payload.get("cuisine_style", "unknown")),
         "ingredient": enrichment_payload.get("ingredient", enrichment_payload.get("main_ingredient", "unknown")),
     }
