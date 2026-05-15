@@ -24,7 +24,7 @@
     {% if recipe.FINAL_RECIPE_TEXT %}
       <section class="recipe-text">
         <h2>Recipe card</h2>
-        <pre>{{ recipe.FINAL_RECIPE_TEXT }}</pre>
+        <div class="recipe-text-content">{{ recipe.FINAL_RECIPE_TEXT }}</div>
       </section>
     {% endif %}
 
@@ -43,11 +43,7 @@
       <h2>Steps</h2>
       <ol class="steps">
         {% for step in steps %}
-          {% if step is mapping %}
-            <li>{{ step.instruction or step.text or step }}</li>
-          {% else %}
-            <li>{{ step }}</li>
-          {% endif %}
+          <li>{{ step }}</li>
         {% else %}
           <li>Steps were not explicitly available in the source evidence.</li>
         {% endfor %}
@@ -70,7 +66,7 @@
     <h2>Original TikTok</h2>
 
     {% if recipe.URL_TIKTOK %}
-      <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="">
+      <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="{{ tiktok_video_id or "" }}">
         <section>
           <a target="_blank" rel="noopener noreferrer" href="{{ recipe.URL_TIKTOK }}">
             View this recipe on TikTok

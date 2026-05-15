@@ -248,6 +248,15 @@ button:hover,
   line-height: 1.25;
 }
 
+.preview {
+  margin: 0.85rem 0 0.8rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  max-height: 4.8rem;
+  overflow: hidden;
+}
+
 .meta,
 .confidence,
 .detail-meta {
@@ -298,7 +307,7 @@ button:hover,
   font-weight: 850;
 }
 
-.recipe-text pre {
+.recipe-text-content {
   white-space: pre-wrap;
   background: #fff7ed;
   border: 1px solid var(--line);

@@ -82,6 +82,12 @@
 
       <h3>{{ recipe.TITLE or recipe.FINAL_RECIPE_TITLE or "Untitled recipe" }}</h3>
 
+      {% if recipe.FINAL_RECIPE_TEXT %}
+        <p class="preview">
+          {{ recipe.FINAL_RECIPE_TEXT.split('\n')[0] | truncate(120, True, '...') }}
+        </p>
+      {% endif %}
+
       <p class="meta">
         Main ingredient: <strong>{{ recipe.MAIN_INGREDIENT or "unknown" }}</strong>
       </p>
