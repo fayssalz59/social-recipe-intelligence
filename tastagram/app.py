@@ -72,6 +72,7 @@ def home(
     }
 
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
             "request": request,
@@ -95,6 +96,7 @@ def recipe_detail(request: Request, recipe_id: int):
     missing_info = final_json.get("missing_info") or []
 
     return templates.TemplateResponse(
+        request,
         "recipe_detail.html",
         {
             "request": request,
