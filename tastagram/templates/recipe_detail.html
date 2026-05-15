@@ -1,85 +1,61 @@
 {% extends "base.html" %}
 
-{% block title %}{{ recipe.TITLE or "Recipe" }} · Tastagram{% endblock %}
+{% block title %}{{ recipe.FINAL_RECIPE_TITLE or recipe.TITLE or "Recipe" }} · Tastagram{% endblock %}
 
 {% block content %}
 <section class="detail-layout">
   <article class="detail-card">
     <a href="/" class="back-link">← Back to recipes</a>
 
-    <div class="badges">
-      <span>{{ recipe.LANGUAGE or "unknown" }}</span>
-      <span>{{ recipe.CUISINE_STYLE or "unknown" }}</span>
-      <span class="quality">Quality {{ recipe.RECIPE_QUALITY_GRADE or "?" }}</span>
-    </div>
-
     <h1>{{ recipe.FINAL_RECIPE_TITLE or recipe.TITLE or "Untitled recipe" }}</h1>
 
-    <p class="detail-meta">
-      Main ingredient: <strong>{{ recipe.MAIN_INGREDIENT or "unknown" }}</strong>
-      · Status: <strong>{{ recipe.RECIPE_STATUS or "unknown" }}</strong>
-      · Score: <strong>{{ "%.0f"|format((recipe.RECIPE_QUALITY_SCORE or 0) * 100) }}%</strong>
-    </p>
-
     {% if recipe.FINAL_RECIPE_TEXT %}
-      <section class="recipe-text">
-        <h2>Recipe card</h2>
-        <div class="recipe-text-content">{{ recipe.FINAL_RECIPE_TEXT }}</div>
-      </section>
+      <div class="recipe-description">
+        <p>{{ recipe.FINAL_RECIPE_TEXT.split('\n')[0] }}</p>
+      </div>
     {% endif %}
 
     <section>
-      <h2>Ingredients</h2>
+      <h2>Ingrédients</h2>
       <ul class="ingredients">
         {% for ingredient in ingredients %}
           <li>{{ ingredient }}</li>
         {% else %}
-          <li>No ingredients were extracted.</li>
+          <li>Aucun ingrédient extrait.</li>
         {% endfor %}
       </ul>
     </section>
 
     <section>
-      <h2>Steps</h2>
+      <h2>Étapes</h2>
       <ol class="steps">
         {% for step in steps %}
           <li>{{ step }}</li>
         {% else %}
-          <li>Steps were not explicitly available in the source evidence.</li>
+          <li>Les étapes n'étaient pas explicitement disponibles dans la source.</li>
         {% endfor %}
       </ol>
     </section>
-
-    {% if missing_info %}
-    <section>
-      <h2>Missing information</h2>
-      <ul class="missing">
-        {% for item in missing_info %}
-          <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
-    </section>
-    {% endif %}
   </article>
 
   <aside class="source-card">
-    <h2>Original TikTok</h2>
+    <h2>Vidéo originale TikTok</h2>
 
     {% if recipe.URL_TIKTOK %}
       <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="{{ tiktok_video_id or "" }}">
         <section>
           <a target="_blank" rel="noopener noreferrer" href="{{ recipe.URL_TIKTOK }}">
-            View this recipe on TikTok
+            Voir cette recette sur TikTok
           </a>
         </section>
       </blockquote>
       <script async src="https://www.tiktok.com/embed.js"></script>
 
       <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="primary-btn full">
-        Open source video
+        Ouvrir la vidéo source
       </a>
     {% else %}
-      <p>No TikTok source URL available.</p>
+      <p>Aucune URL TikTok source disponible.</p>
     {% endif %}
   </aside>
 </section>

@@ -93,6 +93,13 @@ def home(
     recipes = get_recipes(params)
     filters = get_filters()
 
+    # Add formatted ingredients to each recipe for preview
+    for recipe in recipes:
+        final_json = _parse_json_field(recipe.get("FINAL_RECIPE_JSON") or {})
+        if isinstance(final_json, dict):
+            ingredients = final_json.get("ingredients") or recipe.get("INGREDIENTS") or []
+            recipe["preview_ingredients"] = [_format_ingredient(item) for item in ingredients[:3]]  # First 3 ingredients
+
     if q:
         q_lower = q.lower()
         recipes = [
