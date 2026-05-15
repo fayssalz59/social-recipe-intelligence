@@ -22,7 +22,8 @@ REPO_ROOT = "/opt/airflow"
     dag_id="tiktok_recipe_intelligence_pipeline",
     default_args=DEFAULT_ARGS,
     description="Bronze -> Silver -> Gold pipeline for TikTok recipes",
-    schedule="*/30 * * * *",
+    # Four daily runs: 05:00, 12:00, 17:00, and 23:00 UTC.
+    schedule="0 5,12,17,23 * * *",
     start_date=datetime(2026, 5, 10),
     catchup=False,
     tags=["tiktok", "snowflake", "dbt", "llm", "airflow"],
@@ -36,12 +37,16 @@ def tiktok_recipe_pipeline():
         ),
     )
 
+    # Do not call `docker compose run` from inside the Airflow container.
+    # The Airflow image has Docker socket access, but not a reliable Compose V2 CLI.
+    # This lightweight recovery runs directly inside Airflow and skips audio/OCR.
+    # Heavy recovery can still be run manually from the host with the recovery container.
     adaptive_recovery_task = BashOperator(
         task_id="adaptive_recovery_task",
         bash_command=(
-            f"cd {REPO_ROOT}/docker && "
-            "COMPOSE_PROFILES=recovery docker compose run --rm recipe-content-recovery "
-            "python -u -m scripts.recover_recipe_content --method adaptive --limit 100"
+            f"cd {REPO_ROOT} && "
+            "python -u -m scripts.recover_recipe_content "
+            "--method adaptive --limit 100 --skip-audio --skip-ocr"
         ),
     )
 

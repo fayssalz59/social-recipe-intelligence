@@ -112,6 +112,28 @@ services:
       - web
     depends_on:
       - postgres
+
+  tastagram:
+    container_name: tastagram
+    image: python:3.11-slim
+    working_dir: /app
+    env_file:
+      - ../.env
+    environment:
+      TASTAGRAM_API_BASE_URL: "http://recipe-api:8000"
+    command: >
+      bash -c "pip install --no-cache-dir fastapi uvicorn jinja2 requests python-multipart &&
+      uvicorn tastagram.app:app --host 0.0.0.0 --port 8080"
+    volumes:
+      - ..:/app
+    ports:
+      - "127.0.0.1:18090:8080"
+    networks:
+      - data-network
+      - web
+    depends_on:
+      - recipe-api
+
   spark-analytics:
     container_name: recipe-spark-analytics
     image: apache/spark:3.5.7
@@ -167,6 +189,8 @@ services:
       - postgres
 
   recipe-content-recovery:
+    image: recipe-content-recovery:latest
+    container_name: recipe-content-recovery
     profiles: ["recovery"]
     build:
       context: ..
