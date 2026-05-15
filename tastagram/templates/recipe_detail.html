@@ -16,46 +16,46 @@
     {% endif %}
 
     <section>
-      <h2>Ingrédients</h2>
+      <h2>Ingredients</h2>
       <ul class="ingredients">
         {% for ingredient in ingredients %}
           <li>{{ ingredient }}</li>
         {% else %}
-          <li>Aucun ingrédient extrait.</li>
+          <li>No ingredients were extracted.</li>
         {% endfor %}
       </ul>
     </section>
 
     <section>
-      <h2>Étapes</h2>
+      <h2>Steps</h2>
       <ol class="steps">
         {% for step in steps %}
           <li>{{ step }}</li>
         {% else %}
-          <li>Les étapes n'étaient pas explicitement disponibles dans la source.</li>
+          <li>Steps were not explicitly available in the source evidence.</li>
         {% endfor %}
       </ol>
     </section>
   </article>
 
   <aside class="source-card">
-    <h2>Vidéo originale TikTok</h2>
+    <h2>Original TikTok</h2>
 
     {% if recipe.URL_TIKTOK %}
       <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="{{ tiktok_video_id or "" }}">
         <section>
           <a target="_blank" rel="noopener noreferrer" href="{{ recipe.URL_TIKTOK }}">
-            Voir cette recette sur TikTok
+            View this recipe on TikTok
           </a>
         </section>
       </blockquote>
       <script async src="https://www.tiktok.com/embed.js"></script>
 
       <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="primary-btn full">
-        Ouvrir la vidéo source
+        Open source video
       </a>
     {% else %}
-      <p>Aucune URL TikTok source disponible.</p>
+      <p>No TikTok source URL available.</p>
     {% endif %}
   </aside>
 </section>

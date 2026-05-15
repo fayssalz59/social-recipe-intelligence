@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}Tastagram · Recettes sociales{% endblock %}
+{% block title %}Tastagram · Social Recipes{% endblock %}
 
 {% block content %}
 <section class="hero">
   <div>
-    <p class="eyebrow">Intelligence des recettes sociales</p>
-    <h1>Recettes extraites des vidéos culinaires TikTok, nettoyées et structurées.</h1>
+    <p class="eyebrow">Social Recipe Intelligence</p>
+    <h1>Recipes from social food videos, cleaned and structured.</h1>
     <p class="hero-subtitle">
-      Tastagram transforme le contenu alimentaire bruyant de TikTok en cartes de recettes recherchables avec notation de qualité et liens sources.
+      Tastagram turns noisy TikTok food content into searchable recipe cards with quality scoring and source links.
     </p>
   </div>
 </section>
@@ -18,47 +18,47 @@
     <input
       type="search"
       name="q"
-      placeholder="Rechercher des recettes, ingrédients, cuisines..."
+      placeholder="Search recipes, ingredients, cuisines..."
       value="{{ selected.q }}"
       class="search"
     >
 
     <select name="language">
-      <option value="">Toutes les langues</option>
+      <option value="">All languages</option>
       {% for item in filters.languages %}
         <option value="{{ item }}" {% if selected.language == item %}selected{% endif %}>{{ item }}</option>
       {% endfor %}
     </select>
 
     <select name="cuisine_style">
-      <option value="">Toutes les cuisines</option>
+      <option value="">All cuisines</option>
       {% for item in filters.cuisines %}
         <option value="{{ item }}" {% if selected.cuisine_style == item %}selected{% endif %}>{{ item }}</option>
       {% endfor %}
     </select>
 
     <select name="ingredient">
-      <option value="">Tous les ingrédients</option>
+      <option value="">All ingredients</option>
       {% for item in filters.ingredients %}
         <option value="{{ item }}" {% if selected.ingredient == item %}selected{% endif %}>{{ item }}</option>
       {% endfor %}
     </select>
 
     <select name="quality">
-      <option value="">Toute qualité</option>
+      <option value="">Any quality</option>
       {% for item in filters.qualities %}
         <option value="{{ item }}" {% if selected.quality == item %}selected{% endif %}>Qualité {{ item }}</option>
       {% endfor %}
     </select>
 
-    <button type="submit">Filtrer</button>
+    <button type="submit">Filter</button>
   </form>
 </section>
 
 <section class="section-header">
   <div>
-    <h2>{{ recipes|length }} recettes</h2>
-    <p>Sélectionnées du catalogue de recettes Gold API.</p>
+    <h2>{{ recipes|length }} recipes</h2>
+    <p>Curated from the Gold API recipe catalog.</p>
   </div>
 </section>
 
@@ -69,12 +69,12 @@
       <div class="phone-frame">
         <div class="phone-glow"></div>
         <div class="play">▶</div>
-        <span>Source TikTok</span>
+        <span>TikTok source</span>
       </div>
     </div>
 
     <div class="recipe-card-body">
-      <h3>{{ recipe.TITLE or recipe.FINAL_RECIPE_TITLE or "Recette sans titre" }}</h3>
+      <h3>{{ recipe.TITLE or recipe.FINAL_RECIPE_TITLE or "Untitled recipe" }}</h3>
 
       {% if recipe.FINAL_RECIPE_TEXT %}
         <p class="preview">
@@ -84,22 +84,22 @@
 
       {% if recipe.preview_ingredients %}
         <p class="meta">
-          Ingrédients: <strong>{{ recipe.preview_ingredients | join(', ') }}</strong>
+          Ingredients: <strong>{{ recipe.preview_ingredients | join(', ') }}</strong>
         </p>
       {% endif %}
 
       <div class="actions">
-        <a href="/recipes/{{ recipe.ID }}" class="primary-btn">Voir la recette</a>
+        <a href="/recipes/{{ recipe.ID }}" class="primary-btn">View recipe</a>
         {% if recipe.URL_TIKTOK %}
-          <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="secondary-btn">Ouvrir TikTok</a>
+          <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="secondary-btn">Open TikTok</a>
         {% endif %}
       </div>
     </div>
   </article>
   {% else %}
   <div class="empty">
-    <h3>Aucune recette trouvée</h3>
-    <p>Essayez de changer les filtres ou relancez le pipeline.</p>
+    <h3>No recipes found</h3>
+    <p>Try changing the filters or running the pipeline again.</p>
   </div>
   {% endfor %}
 </section>
