@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -91,6 +92,14 @@ def recipe_detail(request: Request, recipe_id: int):
         raise HTTPException(status_code=404, detail="Recipe not found") from exc
 
     final_json = recipe.get("FINAL_RECIPE_JSON") or {}
+    if isinstance(final_json, str):
+        try:
+            final_json = json.loads(final_json)
+        except json.JSONDecodeError:
+            final_json = {}
+    if not isinstance(final_json, dict):
+        final_json = {}
+
     ingredients = final_json.get("ingredients") or recipe.get("INGREDIENTS") or []
     steps = final_json.get("steps") or []
     missing_info = final_json.get("missing_info") or []
