@@ -16,14 +16,14 @@
     {% endif %}
 
     <div class="detail-badges">
-      {% if recipe.LANGUAGE %}
-        <span>{{ recipe.LANGUAGE }}</span>
+      {% if recipe.language_label %}
+        <span>{{ recipe.language_label }}</span>
       {% endif %}
       {% if recipe.CUISINE_STYLE %}
         <span>{{ recipe.CUISINE_STYLE }}</span>
       {% endif %}
       {% if recipe.RECIPE_QUALITY_GRADE %}
-        <span>Quality {{ recipe.RECIPE_QUALITY_GRADE }}</span>
+        <span>Quality {{ recipe.RECIPE_QUALITY_GRADE }}{% if recipe.score_percent %} · {{ recipe.score_percent }}{% endif %}</span>
       {% endif %}
     </div>
 

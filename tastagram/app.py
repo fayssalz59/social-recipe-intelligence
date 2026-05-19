@@ -17,6 +17,15 @@ app = FastAPI(
     description="A recipe website powered by social video data and AI extraction.",
 )
 
+LANGUAGE_LABELS = {
+    "en": "English",
+    "fr": "French",
+    "it": "Italian",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "ar": "Arabic",
+}
+
 
 def _parse_json_field(value: Any) -> Any:
     if isinstance(value, str):
@@ -169,6 +178,31 @@ def _recipe_intro(recipe: dict[str, Any]) -> str:
     return ""
 
 
+def _language_label(value: Any) -> str:
+    code = str(value or "").strip()
+    return LANGUAGE_LABELS.get(code.lower(), code.upper() if len(code) <= 3 else code)
+
+
+def _quality_label(value: Any) -> str:
+    grade = str(value or "").strip().upper()
+    labels = {
+        "A": "High confidence",
+        "B": "Good candidate",
+        "C": "Needs review",
+    }
+    return labels.get(grade, grade)
+
+
+def _score_percent(value: Any) -> str:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if score <= 1:
+        score *= 100
+    return f"{round(score)}%"
+
+
 def _tiktok_video_id(url: str | None) -> str | None:
     if not url:
         return None
@@ -222,11 +256,14 @@ def home(
     recipes = get_recipes(params)
     filters = get_filters()
 
-    # Add formatted ingredients to each recipe for preview
     for recipe in recipes:
         final_json = _parse_json_field(recipe.get("FINAL_RECIPE_JSON") or {})
         recipe["preview_ingredients"] = _normalize_ingredients(final_json, recipe)[:4]
         recipe["thumbnail_url"] = _thumbnail_url(recipe.get("URL_TIKTOK"))
+        recipe["preview_text"] = _recipe_intro(recipe)
+        recipe["language_label"] = _language_label(recipe.get("LANGUAGE"))
+        recipe["quality_label"] = _quality_label(recipe.get("RECIPE_QUALITY_GRADE"))
+        recipe["score_percent"] = _score_percent(recipe.get("RECIPE_QUALITY_SCORE"))
 
     if q:
         q_lower = q.lower()
@@ -245,6 +282,22 @@ def home(
             if str(recipe.get("RECIPE_QUALITY_GRADE", "")).upper() == quality.upper()
         ]
 
+    filters["language_options"] = [
+        {"value": item, "label": _language_label(item)}
+        for item in filters.get("languages", [])
+    ]
+    filters["quality_options"] = [
+        {"value": item, "label": _quality_label(item)}
+        for item in filters.get("qualities", [])
+    ]
+
+    stats = {
+        "recipes": len(recipes),
+        "languages": len({recipe.get("LANGUAGE") for recipe in recipes if recipe.get("LANGUAGE")}),
+        "cuisines": len({recipe.get("CUISINE_STYLE") for recipe in recipes if recipe.get("CUISINE_STYLE")}),
+        "with_thumbnails": sum(1 for recipe in recipes if recipe.get("thumbnail_url")),
+    }
+
     selected = {
         "q": q or "",
         "language": language or "",
@@ -262,6 +315,7 @@ def home(
             "recipes": recipes,
             "filters": filters,
             "selected": selected,
+            "stats": stats,
         },
     )
 
@@ -285,6 +339,9 @@ def recipe_detail(request: Request, recipe_id: int):
     steps = [_format_step(item) for item in steps]
     thumbnail_url = _thumbnail_url(recipe.get("URL_TIKTOK"))
     recipe_intro = _recipe_intro(recipe)
+    recipe["language_label"] = _language_label(recipe.get("LANGUAGE"))
+    recipe["quality_label"] = _quality_label(recipe.get("RECIPE_QUALITY_GRADE"))
+    recipe["score_percent"] = _score_percent(recipe.get("RECIPE_QUALITY_SCORE"))
 
     return templates.TemplateResponse(
         request,

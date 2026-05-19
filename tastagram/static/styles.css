@@ -8,6 +8,7 @@
   --line: #fed7aa;
   --soft: #ffedd5;
   --shadow: 0 20px 50px rgba(154, 52, 18, 0.12);
+  --radius: 18px;
 }
 
 * {
@@ -72,6 +73,10 @@ main {
 
 .hero {
   padding: 5rem 0 2rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 2rem;
+  align-items: end;
 }
 
 .eyebrow {
@@ -84,9 +89,9 @@ main {
 .hero h1 {
   max-width: 780px;
   margin: 0;
-  font-size: clamp(2.6rem, 7vw, 5.6rem);
-  line-height: 0.95;
-  letter-spacing: -0.07em;
+  font-size: clamp(2.6rem, 7vw, 5rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
 }
 
 .hero-subtitle {
@@ -96,13 +101,41 @@ main {
   line-height: 1.7;
 }
 
+.hero-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.hero-stats div {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(254, 215, 170, 0.9);
+  border-radius: var(--radius);
+  padding: 1rem;
+  box-shadow: 0 12px 30px rgba(154, 52, 18, 0.08);
+}
+
+.hero-stats strong {
+  display: block;
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.hero-stats span {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
 .filters-card,
 .detail-card,
 .source-card,
 .recipe-card {
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(254, 215, 170, 0.9);
-  border-radius: 28px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 
@@ -113,7 +146,7 @@ main {
 
 .filters {
   display: grid;
-  grid-template-columns: 2fr repeat(4, minmax(130px, 1fr)) auto;
+  grid-template-columns: 2fr repeat(4, minmax(130px, 1fr)) auto auto;
   gap: 0.75rem;
 }
 
@@ -122,7 +155,7 @@ select,
 button {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   padding: 0.9rem 1rem;
   font: inherit;
   background: white;
@@ -143,6 +176,18 @@ button,
 button:hover,
 .primary-btn:hover {
   background: var(--accent-dark);
+}
+
+.reset-link {
+  display: grid;
+  place-items: center;
+  min-width: 74px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--accent-dark);
+  font-weight: 850;
+  text-decoration: none;
+  background: var(--soft);
 }
 
 .section-header {
@@ -179,7 +224,7 @@ button:hover,
 
 .phone-frame {
   height: 220px;
-  border-radius: 24px;
+  border-radius: 16px;
   background:
     linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(124, 45, 18, 0.88)),
     #111827;
@@ -254,7 +299,7 @@ button:hover,
 .detail-thumbnail-link {
   display: block;
   margin-bottom: 1rem;
-  border-radius: 22px;
+  border-radius: 16px;
   overflow: hidden;
   border: 1px solid var(--line);
   position: relative;
@@ -288,14 +333,16 @@ button:hover,
   padding: 1.15rem;
 }
 
-.badges {
+.badges,
+.card-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
   margin-bottom: 0.8rem;
 }
 
-.badges span {
+.badges span,
+.card-badges span {
   background: var(--soft);
   color: var(--accent-dark);
   padding: 0.35rem 0.6rem;
@@ -315,12 +362,13 @@ button:hover,
   background: var(--soft);
   color: var(--accent-dark);
   padding: 0.42rem 0.7rem;
-  border-radius: 999px;
+  border-radius: 10px;
   font-size: 0.84rem;
   font-weight: 850;
 }
 
-.badges .quality {
+.badges .quality,
+.card-badges .quality-pill {
   background: #dcfce7;
   color: #166534;
 }
@@ -355,7 +403,7 @@ button:hover,
 .primary-btn,
 .secondary-btn {
   display: inline-block;
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 0.75rem 0.95rem;
   font-weight: 850;
   text-decoration: none;
@@ -421,7 +469,7 @@ button:hover,
   text-align: center;
   padding: 4rem;
   background: white;
-  border-radius: 28px;
+  border-radius: var(--radius);
 }
 
 .footer {
@@ -431,6 +479,10 @@ button:hover,
 }
 
 @media (max-width: 980px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
   .filters {
     grid-template-columns: 1fr 1fr;
   }
