@@ -55,10 +55,11 @@ def _coerce_list_field(value: Any) -> list[Any]:
 
 
 def _normalize_ingredients(final_json: Any, recipe: dict[str, Any]) -> list[str]:
-    candidates: list[Any] = []
+    final_ingredients = []
     if isinstance(final_json, dict):
-        candidates.extend(_coerce_list_field(final_json.get("ingredients")))
-    candidates.extend(_coerce_list_field(recipe.get("INGREDIENTS")))
+        final_ingredients = _coerce_list_field(final_json.get("ingredients"))
+    fallback_ingredients = _coerce_list_field(recipe.get("INGREDIENTS"))
+    candidates = final_ingredients or fallback_ingredients
 
     output: list[str] = []
     seen: set[str] = set()
@@ -69,11 +70,46 @@ def _normalize_ingredients(final_json: Any, recipe: dict[str, Any]) -> list[str]
             continue
         if normalized.lower() in {"unknown", "none", "null", "ingredient"}:
             continue
-        key = normalized.lower()
+        key = _ingredient_key(normalized)
+        if _is_weaker_duplicate(normalized, key, output):
+            continue
+        output = [
+            existing
+            for existing in output
+            if not _is_weaker_duplicate(existing, _ingredient_key(existing), [normalized])
+        ]
+        seen = {_ingredient_key(existing) for existing in output}
         if key not in seen:
             output.append(normalized)
             seen.add(key)
     return output
+
+
+def _ingredient_key(value: str) -> str:
+    text = re.sub(r"\([^)]*\)", "", value.lower())
+    text = re.sub(r"\b\d+([.,]\d+)?\b", "", text)
+    text = re.sub(
+        r"\b(g|kg|ml|cl|l|tbsp|tsp|cup|cups|cuil|cuillere|cuillère|soupe|sachet|pincée|pincee|de|d'|du|des|fresh|frais|fondu|fondue|tiède|tiede)\b",
+        " ",
+        text,
+    )
+    text = re.sub(r"[^a-zà-ÿ0-9]+", " ", text).strip()
+    return text or value.lower().strip()
+
+
+def _has_quantity(value: str) -> bool:
+    return bool(re.search(r"\d", value))
+
+
+def _is_weaker_duplicate(value: str, key: str, existing_values: list[str]) -> bool:
+    if not key:
+        return False
+    for existing in existing_values:
+        existing_key = _ingredient_key(existing)
+        same_meaning = key == existing_key or key in existing_key or existing_key in key
+        if same_meaning and _has_quantity(existing) and not _has_quantity(value):
+            return True
+    return False
 
 
 def _format_ingredient(ingredient: Any) -> str:
@@ -101,6 +137,36 @@ def _format_step(step: Any) -> str:
     if isinstance(step, dict):
         return str(step.get("instruction") or step.get("text") or step.get("step") or next(iter(step.values()), ""))
     return str(step)
+
+
+def _clean_recipe_text(value: Any) -> str:
+    if not value:
+        return ""
+    lines = []
+    for raw_line in str(value).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^#{1,6}\s*", "", line).strip()
+        if line.lower() in {"ingredients", "ingredient", "steps", "instructions", "preparation"}:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _recipe_intro(recipe: dict[str, Any]) -> str:
+    text = _clean_recipe_text(recipe.get("FINAL_RECIPE_TEXT"))
+    if not text:
+        return ""
+    title = str(recipe.get("FINAL_RECIPE_TITLE") or recipe.get("TITLE") or "").strip().lower()
+    for line in text.splitlines():
+        clean_line = line.strip()
+        if title and clean_line.lower() == title:
+            continue
+        if clean_line.lower().startswith(("ingredient", "step", "instructions")):
+            continue
+        return clean_line
+    return ""
 
 
 def _tiktok_video_id(url: str | None) -> str | None:
@@ -218,6 +284,7 @@ def recipe_detail(request: Request, recipe_id: int):
 
     steps = [_format_step(item) for item in steps]
     thumbnail_url = _thumbnail_url(recipe.get("URL_TIKTOK"))
+    recipe_intro = _recipe_intro(recipe)
 
     return templates.TemplateResponse(
         request,
@@ -230,5 +297,6 @@ def recipe_detail(request: Request, recipe_id: int):
             "missing_info": missing_info,
             "tiktok_video_id": video_id,
             "thumbnail_url": thumbnail_url,
+            "recipe_intro": recipe_intro,
         },
     )

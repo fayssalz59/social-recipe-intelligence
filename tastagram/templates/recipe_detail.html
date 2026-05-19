@@ -9,11 +9,23 @@
 
     <h1>{{ recipe.FINAL_RECIPE_TITLE or recipe.TITLE or "Untitled recipe" }}</h1>
 
-    {% if recipe.FINAL_RECIPE_TEXT %}
+    {% if recipe_intro %}
       <div class="recipe-description">
-        <p>{{ recipe.FINAL_RECIPE_TEXT.split('\n')[0] }}</p>
+        <p>{{ recipe_intro }}</p>
       </div>
     {% endif %}
+
+    <div class="detail-badges">
+      {% if recipe.LANGUAGE %}
+        <span>{{ recipe.LANGUAGE }}</span>
+      {% endif %}
+      {% if recipe.CUISINE_STYLE %}
+        <span>{{ recipe.CUISINE_STYLE }}</span>
+      {% endif %}
+      {% if recipe.RECIPE_QUALITY_GRADE %}
+        <span>Quality {{ recipe.RECIPE_QUALITY_GRADE }}</span>
+      {% endif %}
+    </div>
 
     <section>
       <h2>Ingredients</h2>
@@ -45,16 +57,18 @@
       {% if thumbnail_url %}
         <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="detail-thumbnail-link">
           <img src="{{ thumbnail_url }}" alt="TikTok thumbnail" class="detail-thumbnail">
+          <span class="detail-play">▶</span>
         </a>
+      {% else %}
+        <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="{{ tiktok_video_id or "" }}">
+          <section>
+            <a target="_blank" rel="noopener noreferrer" href="{{ recipe.URL_TIKTOK }}">
+              View this recipe on TikTok
+            </a>
+          </section>
+        </blockquote>
+        <script async src="https://www.tiktok.com/embed.js"></script>
       {% endif %}
-      <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="{{ tiktok_video_id or "" }}">
-        <section>
-          <a target="_blank" rel="noopener noreferrer" href="{{ recipe.URL_TIKTOK }}">
-            View this recipe on TikTok
-          </a>
-        </section>
-      </blockquote>
-      <script async src="https://www.tiktok.com/embed.js"></script>
 
       <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="primary-btn full">
         Open source video

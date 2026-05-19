@@ -257,6 +257,8 @@ button:hover,
   border-radius: 22px;
   overflow: hidden;
   border: 1px solid var(--line);
+  position: relative;
+  background: #111827;
 }
 
 .detail-thumbnail {
@@ -264,6 +266,22 @@ button:hover,
   width: 100%;
   aspect-ratio: 9 / 16;
   object-fit: cover;
+}
+
+.detail-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: white;
+  background: rgba(249, 115, 22, 0.92);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.28);
+  transform: translate(-50%, -50%);
+  font-size: 1.35rem;
 }
 
 .recipe-card-body {
@@ -284,6 +302,22 @@ button:hover,
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 800;
+}
+
+.detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1.2rem;
+}
+
+.detail-badges span {
+  background: var(--soft);
+  color: var(--accent-dark);
+  padding: 0.42rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  font-weight: 850;
 }
 
 .badges .quality {
@@ -369,7 +403,12 @@ button:hover,
 .ingredients,
 .steps,
 .missing {
-  line-height: 1.8;
+  line-height: 1.75;
+}
+
+.ingredients li,
+.steps li {
+  margin-bottom: 0.35rem;
 }
 
 .full {
