@@ -157,7 +157,11 @@ def _clean_recipe_text(value: Any) -> str:
         if not line:
             continue
         line = re.sub(r"^#{1,6}\s*", "", line).strip()
-        if line.lower() in {"ingredients", "ingredient", "steps", "instructions", "preparation"}:
+        line = re.sub(r"^\*\*(.*?)\*\*:?\s*$", r"\1", line).strip()
+        line = re.sub(r"^\*\*(.*?)\*\*", r"\1", line).strip()
+        line = re.sub(r"^[-*]\s+", "", line).strip()
+        label = line.lower().strip(":").strip()
+        if label in {"ingredients", "ingredient", "steps", "instructions", "preparation", "method", "directions"}:
             continue
         lines.append(line)
     return "\n".join(lines).strip()
@@ -172,7 +176,8 @@ def _recipe_intro(recipe: dict[str, Any]) -> str:
         clean_line = line.strip()
         if title and clean_line.lower() == title:
             continue
-        if clean_line.lower().startswith(("ingredient", "step", "instructions")):
+        label = clean_line.lower().strip(":").strip()
+        if label in {"ingredients", "ingredient", "steps", "instructions", "preparation", "method", "directions"}:
             continue
         return clean_line
     return ""

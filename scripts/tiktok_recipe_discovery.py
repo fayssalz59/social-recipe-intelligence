@@ -260,8 +260,22 @@ def load_terms(path: str | None, defaults: list[str]) -> list[str]:
     if not content:
         return []
 
-    if content.startswith("["):
-        return [str(item).strip() for item in json.loads(content) if str(item).strip()]
+    if content.startswith("[") or content.startswith("{"):
+        payload = json.loads(content)
+        if isinstance(payload, list):
+            return [str(item).strip() for item in payload if str(item).strip()]
+        if isinstance(payload, dict):
+            creators = payload.get("creators")
+            if isinstance(creators, list):
+                return [str(item).strip() for item in creators if str(item).strip()]
+            grouped = payload.get("creators_by_language")
+            if isinstance(grouped, dict):
+                flattened: list[str] = []
+                for values in grouped.values():
+                    if isinstance(values, list):
+                        flattened.extend(str(item).strip() for item in values if str(item).strip())
+                return list(dict.fromkeys(flattened))
+        return []
 
     return [
         line.strip().lstrip("#").strip()
