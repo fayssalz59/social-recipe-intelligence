@@ -29,6 +29,23 @@ REPO_ROOT = "/opt/airflow"
     tags=["tiktok", "snowflake", "dbt", "llm", "airflow"],
 )
 def tiktok_recipe_pipeline():
+    discovery_task = BashOperator(
+        task_id="tiktok_discovery_task",
+        bash_command=(
+            "docker exec tiktok-monitor bash -lc '"
+            "cd /app && "
+            "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb-discovery.log 2>&1 & "
+            "export DISPLAY=:99 && "
+            "python -u -m scripts.tiktok_recipe_discovery "
+            "--creators-file config/creators.json "
+            "--max-rows ${DISCOVERY_MAX_ROWS:-500} "
+            "--per-creator ${DISCOVERY_PER_CREATOR:-10} "
+            "--per-hashtag ${DISCOVERY_PER_HASHTAG:-60} "
+            "--per-user-search ${DISCOVERY_PER_USER_SEARCH:-12} "
+            "--per-searched-user ${DISCOVERY_PER_SEARCHED_USER:-8}'"
+        ),
+    )
+
     bronze_ingest_task = BashOperator(
         task_id="bronze_ingest_task",
         bash_command=(
@@ -46,7 +63,7 @@ def tiktok_recipe_pipeline():
         bash_command=(
             f"cd {REPO_ROOT} && "
             "python -u -m scripts.recover_recipe_content "
-            "--method adaptive --limit 100 --skip-audio --skip-ocr"
+            "--method adaptive --limit 250 --skip-audio --skip-ocr"
         ),
     )
 
@@ -54,7 +71,7 @@ def tiktok_recipe_pipeline():
         task_id="silver_enrich_new_task",
         bash_command=(
             f"cd {REPO_ROOT} && "
-            "python -m scripts.enrich_silver --limit 250"
+            "python -m scripts.enrich_silver --limit 500"
         ),
     )
 
@@ -62,7 +79,7 @@ def tiktok_recipe_pipeline():
         task_id="silver_enrich_recovered_task",
         bash_command=(
             f"cd {REPO_ROOT} && "
-            "python -m scripts.enrich_silver --limit 250 --only-recovered"
+            "python -m scripts.enrich_silver --limit 500 --only-recovered"
         ),
     )
 
@@ -87,7 +104,8 @@ def tiktok_recipe_pipeline():
     )
 
     (
-        bronze_ingest_task
+        discovery_task
+        >> bronze_ingest_task
         >> adaptive_recovery_task
         >> silver_enrich_new_task
         >> silver_enrich_recovered_task

@@ -31,8 +31,11 @@ def tiktok_creator_monitor_pipeline():
     monitor_creator_videos_task = BashOperator(
         task_id="monitor_creator_videos_task",
         bash_command=(
-            f"cd {REPO_ROOT} && "
-            "python -m scripts.tiktok_creator_monitor"
+            "docker exec tiktok-monitor bash -lc '"
+            "cd /app && "
+            "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb-monitor.log 2>&1 & "
+            "export DISPLAY=:99 && "
+            "python -m scripts.tiktok_creator_monitor'"
         ),
     )
 
@@ -48,7 +51,7 @@ def tiktok_creator_monitor_pipeline():
         task_id="silver_enrich_task",
         bash_command=(
             f"cd {REPO_ROOT} && "
-            "python -m scripts.enrich_silver --limit 100"
+            "python -m scripts.enrich_silver --limit 250"
         ),
     )
 

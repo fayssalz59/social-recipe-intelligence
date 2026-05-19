@@ -175,11 +175,16 @@ services:
     networks:
       - data-network
   tiktok-monitor:
+    container_name: tiktok-monitor
     build:
       context: ..
       dockerfile: docker/tiktok-monitor/Dockerfile
+    command: >
+      bash -c "tail -f /dev/null"
     env_file:
       - ../.env
+    environment:
+      PYTHONPATH: /app
     volumes:
       - ..:/app
     networks:
