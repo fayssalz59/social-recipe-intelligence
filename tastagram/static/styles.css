@@ -190,6 +190,22 @@ button:hover,
   overflow: hidden;
 }
 
+.video-link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.video-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
+}
+
+.video-link:hover .play {
+  background: rgba(249, 115, 22, 0.92);
+  transform: scale(1.06);
+}
+
 .thumbnail {
   position: absolute;
   inset: 0;
@@ -224,6 +240,7 @@ button:hover,
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.18);
   font-size: 1.5rem;
+  transition: transform 180ms ease, background 180ms ease;
 }
 
 .phone-frame span {
