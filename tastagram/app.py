@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Optional, Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -26,7 +27,57 @@ def _parse_json_field(value: Any) -> Any:
     return value
 
 
+def _coerce_list_field(value: Any) -> list[Any]:
+    value = _parse_json_field(value)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, dict):
+        for key in ("ingredients", "items", "values"):
+            nested = value.get(key)
+            if nested:
+                return _coerce_list_field(nested)
+        return [value]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() in {"null", "none", "unknown", "[]"}:
+            return []
+        parsed = _parse_json_field(text)
+        if parsed is not value:
+            return _coerce_list_field(parsed)
+        if "\n" in text:
+            return [part.strip(" -\t") for part in text.splitlines() if part.strip(" -\t")]
+        return [part.strip() for part in text.split(",") if part.strip()]
+    return [value]
+
+
+def _normalize_ingredients(final_json: Any, recipe: dict[str, Any]) -> list[str]:
+    candidates: list[Any] = []
+    if isinstance(final_json, dict):
+        candidates.extend(_coerce_list_field(final_json.get("ingredients")))
+    candidates.extend(_coerce_list_field(recipe.get("INGREDIENTS")))
+
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        formatted = _format_ingredient(item)
+        normalized = formatted.strip().strip(",")
+        if not normalized or normalized in {"[", "]", "{", "}"}:
+            continue
+        if normalized.lower() in {"unknown", "none", "null", "ingredient"}:
+            continue
+        key = normalized.lower()
+        if key not in seen:
+            output.append(normalized)
+            seen.add(key)
+    return output
+
+
 def _format_ingredient(ingredient: Any) -> str:
+    ingredient = _parse_json_field(ingredient)
     if isinstance(ingredient, dict):
         name = ingredient.get("name") or ingredient.get("ingredient") or ingredient.get("text") or "ingredient"
         quantity = ingredient.get("quantity")
@@ -42,7 +93,8 @@ def _format_ingredient(ingredient: Any) -> str:
         if notes:
             return f"{primary} ({notes})"
         return primary
-    return str(ingredient)
+    text = str(ingredient).strip()
+    return text.strip("[]{}'\" ")
 
 
 def _format_step(step: Any) -> str:
@@ -61,6 +113,17 @@ def _tiktok_video_id(url: str | None) -> str | None:
     if match:
         return match.group(1)
     return None
+
+
+def _thumbnail_url(url: str | None) -> str | None:
+    video_id = _tiktok_video_id(url)
+    if not video_id:
+        return None
+    thumbnail_path = Path("tastagram/static/thumbnails") / f"{video_id}.jpg"
+    if thumbnail_path.exists():
+        return f"/static/thumbnails/{video_id}.jpg"
+    return None
+
 
 templates = Jinja2Templates(directory="tastagram/templates")
 app.mount("/static", StaticFiles(directory="tastagram/static"), name="static")
@@ -96,9 +159,8 @@ def home(
     # Add formatted ingredients to each recipe for preview
     for recipe in recipes:
         final_json = _parse_json_field(recipe.get("FINAL_RECIPE_JSON") or {})
-        if isinstance(final_json, dict):
-            ingredients = final_json.get("ingredients") or recipe.get("INGREDIENTS") or []
-            recipe["preview_ingredients"] = [_format_ingredient(item) for item in ingredients[:3]]  # First 3 ingredients
+        recipe["preview_ingredients"] = _normalize_ingredients(final_json, recipe)[:4]
+        recipe["thumbnail_url"] = _thumbnail_url(recipe.get("URL_TIKTOK"))
 
     if q:
         q_lower = q.lower()
@@ -149,13 +211,13 @@ def recipe_detail(request: Request, recipe_id: int):
     if not isinstance(final_json, dict):
         final_json = {}
 
-    ingredients = final_json.get("ingredients") or recipe.get("INGREDIENTS") or []
+    ingredients = _normalize_ingredients(final_json, recipe)
     steps = final_json.get("steps") or []
     missing_info = final_json.get("missing_info") or []
     video_id = _tiktok_video_id(recipe.get("URL_TIKTOK"))
 
-    ingredients = [_format_ingredient(item) for item in ingredients]
     steps = [_format_step(item) for item in steps]
+    thumbnail_url = _thumbnail_url(recipe.get("URL_TIKTOK"))
 
     return templates.TemplateResponse(
         request,
@@ -167,5 +229,6 @@ def recipe_detail(request: Request, recipe_id: int):
             "steps": steps,
             "missing_info": missing_info,
             "tiktok_video_id": video_id,
+            "thumbnail_url": thumbnail_url,
         },
     )

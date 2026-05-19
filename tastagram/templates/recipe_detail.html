@@ -42,6 +42,11 @@
     <h2>Original TikTok</h2>
 
     {% if recipe.URL_TIKTOK %}
+      {% if thumbnail_url %}
+        <a href="{{ recipe.URL_TIKTOK }}" target="_blank" rel="noopener noreferrer" class="detail-thumbnail-link">
+          <img src="{{ thumbnail_url }}" alt="TikTok thumbnail" class="detail-thumbnail">
+        </a>
+      {% endif %}
       <blockquote class="tiktok-embed" cite="{{ recipe.URL_TIKTOK }}" data-video-id="{{ tiktok_video_id or "" }}">
         <section>
           <a target="_blank" rel="noopener noreferrer" href="{{ recipe.URL_TIKTOK }}">

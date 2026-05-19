@@ -67,7 +67,11 @@
   <article class="recipe-card">
     <div class="tiktok-preview">
       <div class="phone-frame">
-        <div class="phone-glow"></div>
+        {% if recipe.thumbnail_url %}
+          <img src="{{ recipe.thumbnail_url }}" alt="TikTok thumbnail for {{ recipe.TITLE or recipe.FINAL_RECIPE_TITLE or 'recipe' }}" class="thumbnail">
+        {% else %}
+          <div class="phone-glow"></div>
+        {% endif %}
         <div class="play">▶</div>
         <span>TikTok source</span>
       </div>
