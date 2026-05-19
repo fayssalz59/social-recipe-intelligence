@@ -8,7 +8,7 @@
     <p class="eyebrow">Social Recipe Intelligence</p>
     <h1>Searchable recipes extracted from short-form food videos.</h1>
     <p class="hero-subtitle">
-      Tastagram turns noisy social video captions into structured recipe cards with source traceability, quality scoring, and ingredient-level search.
+      Tastagram turns noisy social video captions into structured recipe cards with source traceability and ingredient-level search.
     </p>
   </div>
   <div class="hero-stats">
@@ -62,13 +62,6 @@
       {% endfor %}
     </select>
 
-    <select name="quality">
-      <option value="">Any quality</option>
-      {% for item in filters.quality_options %}
-        <option value="{{ item.value }}" {% if selected.quality == item.value %}selected{% endif %}>{{ item.value }} - {{ item.label }}</option>
-      {% endfor %}
-    </select>
-
     <button type="submit">Filter</button>
     <a href="/" class="reset-link">Reset</a>
   </form>
@@ -111,9 +104,6 @@
         {% endif %}
         {% if recipe.CUISINE_STYLE and recipe.CUISINE_STYLE != "Unknown" %}
           <span>{{ recipe.CUISINE_STYLE }}</span>
-        {% endif %}
-        {% if recipe.RECIPE_QUALITY_GRADE %}
-          <span class="quality-pill">{{ recipe.RECIPE_QUALITY_GRADE }}</span>
         {% endif %}
       </div>
 

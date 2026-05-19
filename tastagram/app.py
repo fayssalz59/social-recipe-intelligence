@@ -183,26 +183,6 @@ def _language_label(value: Any) -> str:
     return LANGUAGE_LABELS.get(code.lower(), code.upper() if len(code) <= 3 else code)
 
 
-def _quality_label(value: Any) -> str:
-    grade = str(value or "").strip().upper()
-    labels = {
-        "A": "High confidence",
-        "B": "Good candidate",
-        "C": "Needs review",
-    }
-    return labels.get(grade, grade)
-
-
-def _score_percent(value: Any) -> str:
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return ""
-    if score <= 1:
-        score *= 100
-    return f"{round(score)}%"
-
-
 def _tiktok_video_id(url: str | None) -> str | None:
     if not url:
         return None
@@ -241,7 +221,6 @@ def home(
     language: Optional[str] = Query(default=None),
     cuisine_style: Optional[str] = Query(default=None),
     ingredient: Optional[str] = Query(default=None),
-    quality: Optional[str] = Query(default=None),
     is_vegetarian: Optional[bool] = Query(default=None),
 ):
     params = {
@@ -262,8 +241,6 @@ def home(
         recipe["thumbnail_url"] = _thumbnail_url(recipe.get("URL_TIKTOK"))
         recipe["preview_text"] = _recipe_intro(recipe)
         recipe["language_label"] = _language_label(recipe.get("LANGUAGE"))
-        recipe["quality_label"] = _quality_label(recipe.get("RECIPE_QUALITY_GRADE"))
-        recipe["score_percent"] = _score_percent(recipe.get("RECIPE_QUALITY_SCORE"))
 
     if q:
         q_lower = q.lower()
@@ -275,20 +252,9 @@ def home(
             or q_lower in str(recipe.get("MAIN_INGREDIENT", "")).lower()
         ]
 
-    if quality:
-        recipes = [
-            recipe
-            for recipe in recipes
-            if str(recipe.get("RECIPE_QUALITY_GRADE", "")).upper() == quality.upper()
-        ]
-
     filters["language_options"] = [
         {"value": item, "label": _language_label(item)}
         for item in filters.get("languages", [])
-    ]
-    filters["quality_options"] = [
-        {"value": item, "label": _quality_label(item)}
-        for item in filters.get("qualities", [])
     ]
 
     stats = {
@@ -303,7 +269,6 @@ def home(
         "language": language or "",
         "cuisine_style": cuisine_style or "",
         "ingredient": ingredient or "",
-        "quality": quality or "",
         "is_vegetarian": is_vegetarian,
     }
 
@@ -340,8 +305,6 @@ def recipe_detail(request: Request, recipe_id: int):
     thumbnail_url = _thumbnail_url(recipe.get("URL_TIKTOK"))
     recipe_intro = _recipe_intro(recipe)
     recipe["language_label"] = _language_label(recipe.get("LANGUAGE"))
-    recipe["quality_label"] = _quality_label(recipe.get("RECIPE_QUALITY_GRADE"))
-    recipe["score_percent"] = _score_percent(recipe.get("RECIPE_QUALITY_SCORE"))
 
     return templates.TemplateResponse(
         request,

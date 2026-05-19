@@ -367,8 +367,7 @@ button:hover,
   font-weight: 850;
 }
 
-.badges .quality,
-.card-badges .quality-pill {
+.badges .quality {
   background: #dcfce7;
   color: #166534;
 }
