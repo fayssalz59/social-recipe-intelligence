@@ -36,12 +36,19 @@ def recipe_status(description: str) -> str:
     return "food_content"
 
 
+ARABIC_SCRIPT_RE = re.compile(r"[\u0600-\u06ff]")
+
+
+def has_arabic_script(text: str) -> bool:
+    return len(ARABIC_SCRIPT_RE.findall(text)) >= 3
+
+
 def language_hint(value: object, description: str) -> str:
     hint = clean_text(value).lower()
+    if has_arabic_script(description):
+        return "ar"
     if hint in {"en", "fr", "es", "it", "pt", "ar"}:
         return hint
-    if re.search(r"[\u0600-\u06ff]", description):
-        return "ar"
     return hint or "en"
 
 
