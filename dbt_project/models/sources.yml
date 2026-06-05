@@ -2,8 +2,7 @@ version: 2
 
 sources:
   - name: silver
-    database: "{{ env_var('SNOWFLAKE_DB') }}"
-    schema: "{{ env_var('SNOWFLAKE_SCHEMA_SILVER', 'SILVER') }}"
+    schema: main
     tables:
       - name: SILVER_TIKTOK_RECIPES
       - name: SILVER_RECIPE_EVIDENCE

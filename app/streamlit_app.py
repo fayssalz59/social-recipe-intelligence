@@ -5,17 +5,22 @@ import os
 from typing import Any
 
 import pandas as pd
-import snowflake.connector
+import duckdb
+from pathlib import Path
 import streamlit as st
 
 st.set_page_config(page_title="TikTok Recipe Intelligence", layout="wide")
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DUCKDB_PATH = Path(os.getenv("DUCKDB_PATH", REPO_ROOT / "data" / "duckdb" / "recipes.duckdb"))
+
+
 def gold_table_name(table: str) -> str:
-    schema = os.getenv("SNOWFLAKE_SCHEMA_GOLD", "GOLD")
-    if not schema.replace("_", "").isalnum():
-        raise ValueError(f"Invalid Snowflake schema name: {schema}")
-    return f"{schema}.{table}"
+    normalized = table.upper()
+    if not normalized.replace("_", "").isalnum():
+        raise ValueError(f"Invalid DuckDB table name: {table}")
+    return normalized
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -24,28 +29,13 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def query_snowflake(query: str) -> pd.DataFrame:
-    required = {
-        "SNOWFLAKE_USER": os.getenv("SNOWFLAKE_USER"),
-        "SNOWFLAKE_PASSWORD": os.getenv("SNOWFLAKE_PASSWORD"),
-        "SNOWFLAKE_ACCOUNT": os.getenv("SNOWFLAKE_ACCOUNT"),
-        "SNOWFLAKE_WAREHOUSE": os.getenv("SNOWFLAKE_WAREHOUSE"),
-        "SNOWFLAKE_DB": os.getenv("SNOWFLAKE_DB"),
-    }
-    missing = [name for name, value in required.items() if not value]
-    if missing:
-        raise ValueError(f"Missing Snowflake environment variables: {', '.join(missing)}")
-
-    with snowflake.connector.connect(
-        user=required["SNOWFLAKE_USER"],
-        password=required["SNOWFLAKE_PASSWORD"],
-        account=required["SNOWFLAKE_ACCOUNT"],
-        warehouse=required["SNOWFLAKE_WAREHOUSE"],
-        database=required["SNOWFLAKE_DB"],
-        schema=os.getenv("SNOWFLAKE_SCHEMA_GOLD", "GOLD"),
-        role=os.getenv("SNOWFLAKE_ROLE"),
-    ) as conn:
-        return normalize_columns(pd.read_sql(query, conn))
+def query_duckdb(query: str) -> pd.DataFrame:
+    if not DUCKDB_PATH.exists():
+        raise FileNotFoundError(
+            f"DuckDB database not found at {DUCKDB_PATH}. Run `python scripts/build_duckdb_demo.py` first."
+        )
+    with duckdb.connect(str(DUCKDB_PATH), read_only=True) as conn:
+        return normalize_columns(conn.execute(query).fetchdf())
 
 
 def safe_scalar(value: Any, fallback: str = "unknown") -> str:
@@ -300,13 +290,13 @@ def load_catalog() -> pd.DataFrame:
     FROM {gold_table_name("GOLD_STREAMLIT_RECIPE_CATALOG")}
     ORDER BY PROCESSED_AT DESC
     """
-    return query_snowflake(query)
+    return query_duckdb(query)
 
 
 @st.cache_data(ttl=300)
 def load_optional_table(table: str) -> pd.DataFrame:
     try:
-        return query_snowflake(f"SELECT * FROM {gold_table_name(table)}")
+        return query_duckdb(f"SELECT * FROM {gold_table_name(table)}")
     except Exception:
         return pd.DataFrame()
 
@@ -328,7 +318,7 @@ def load_layer_counts() -> pd.DataFrame:
     FROM {database}.{gold}.GOLD_STREAMLIT_RECIPE_CATALOG
     """
     try:
-        return query_snowflake(query)
+        return query_duckdb(query)
     except Exception:
         return pd.DataFrame()
 
@@ -349,7 +339,7 @@ def load_recovery_counts() -> pd.DataFrame:
     ORDER BY RECORDS DESC
     """
     try:
-        return query_snowflake(query)
+        return query_duckdb(query)
     except Exception:
         return pd.DataFrame()
 
@@ -357,7 +347,7 @@ def load_recovery_counts() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def load_data_quality_daily() -> pd.DataFrame:
     try:
-        return query_snowflake(f"SELECT * FROM {gold_table_name('GOLD_DATA_QUALITY_DAILY')}")
+        return query_duckdb(f"SELECT * FROM {gold_table_name('GOLD_DATA_QUALITY_DAILY')}")
     except Exception:
         return pd.DataFrame()
 
@@ -435,7 +425,7 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_sidebar_navigation() -> str:
     st.sidebar.title("Recipe Intelligence")
-    st.sidebar.caption("Snowflake-backed recipe analytics platform")
+    st.sidebar.caption("DuckDB-backed recipe analytics platform")
     page = st.sidebar.radio(
         "Navigation",
         options=["Search", "Analytics", "Catalog", "Data quality", "Platform"],
@@ -485,8 +475,8 @@ def render_home(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
             <div class="hero-title">TikTok Recipe Intelligence</div>
             <div class="hero-copy">
                 An end-to-end data engineering project that turns unstructured social recipe content into
-                curated, searchable, and analytics-ready data. The platform combines ingestion, Snowflake
-                medallion modeling, LLM enrichment, dbt serving views, Spark analytics, Airflow orchestration,
+                curated, searchable, and analytics-ready data. The platform combines ingestion, DuckDB
+                medallion modeling, LLM enrichment, dbt serving views, DuckDB analytics, Airflow orchestration,
                 a FastAPI service, and this Streamlit data product.
             </div>
         </div>
@@ -538,10 +528,10 @@ def render_home(df: pd.DataFrame, filtered: pd.DataFrame) -> None:
     st.subheader("Pipeline shape")
     step_1, step_2, step_3, step_4, step_5 = st.columns(5)
     steps = [
-        ("Bronze", "Raw TikTok or CSV records land in Snowflake with source metadata."),
+        ("Bronze", "Raw TikTok or CSV records land in DuckDB with source metadata."),
         ("Silver", "OpenRouter enriches recipe text into validated structured fields."),
         ("Gold", "dbt creates curated serving views for API and dashboard consumers."),
-        ("Spark", "Batch analytics are written back to Snowflake aggregate tables."),
+        ("Spark", "Batch analytics are written back to DuckDB aggregate tables."),
         ("Products", "FastAPI and Streamlit expose the curated recipe intelligence layer."),
     ]
     for column, (title, copy) in zip([step_1, step_2, step_3, step_4, step_5], steps):
@@ -768,7 +758,7 @@ def render_search_browser(df: pd.DataFrame) -> None:
 
 def render_analytics(filtered: pd.DataFrame) -> None:
     st.title("Analytics")
-    st.caption("Explore the enriched recipe catalog and Spark-generated aggregate tables.")
+    st.caption("Explore the enriched recipe catalog and DuckDB aggregate tables.")
 
     chart_col_1, chart_col_2 = st.columns(2)
     with chart_col_1:
@@ -815,8 +805,8 @@ def render_analytics(filtered: pd.DataFrame) -> None:
         st.bar_chart(dietary_counts, x="DIETARY_CLASS", y="RECIPE_COUNT", use_container_width=True)
 
     st.divider()
-    st.title("Spark analytics")
-    render_spark_analytics()
+    st.title("DuckDB analytics")
+    render_duckdb_analytics()
 
 
 def render_catalog(filtered: pd.DataFrame) -> None:
@@ -884,7 +874,7 @@ def render_catalog(filtered: pd.DataFrame) -> None:
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
-def render_spark_analytics() -> None:
+def render_duckdb_analytics() -> None:
     summary = load_optional_table("RECIPE_ANALYTICS_SUMMARY")
     by_cuisine = load_optional_table("RECIPE_ANALYTICS_BY_CUISINE")
     by_ingredient = load_optional_table("RECIPE_ANALYTICS_BY_INGREDIENT")
@@ -892,28 +882,28 @@ def render_spark_analytics() -> None:
     by_model = load_optional_table("RECIPE_ANALYTICS_BY_MODEL")
 
     if summary.empty and by_cuisine.empty and by_ingredient.empty and by_language.empty and by_model.empty:
-        st.info("Spark analytics tables are not available yet.")
+        st.info("DuckDB analytics tables are not available yet.")
         return
 
     if not summary.empty:
-        st.subheader("Spark summary")
+        st.subheader("DuckDB summary")
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
     spark_col_1, spark_col_2 = st.columns(2)
     with spark_col_1:
         if not by_cuisine.empty and "CUISINE_STYLE" in by_cuisine and "RECIPE_COUNT" in by_cuisine:
-            st.subheader("Spark by cuisine")
+            st.subheader("DuckDB by cuisine")
             st.bar_chart(by_cuisine.head(15), x="CUISINE_STYLE", y="RECIPE_COUNT", use_container_width=True)
         if not by_language.empty and "RECIPE_LANGUAGE" in by_language and "RECIPE_COUNT" in by_language:
-            st.subheader("Spark by language")
+            st.subheader("DuckDB by language")
             st.bar_chart(by_language.head(15), x="RECIPE_LANGUAGE", y="RECIPE_COUNT", use_container_width=True)
 
     with spark_col_2:
         if not by_ingredient.empty and "MAIN_INGREDIENT" in by_ingredient and "RECIPE_COUNT" in by_ingredient:
-            st.subheader("Spark by ingredient")
+            st.subheader("DuckDB by ingredient")
             st.bar_chart(by_ingredient.head(15), x="MAIN_INGREDIENT", y="RECIPE_COUNT", use_container_width=True)
         if not by_model.empty and "MODEL_NAME" in by_model and "RECIPE_COUNT" in by_model:
-            st.subheader("Spark by model")
+            st.subheader("DuckDB by model")
             st.bar_chart(by_model.head(15), x="MODEL_NAME", y="RECIPE_COUNT", use_container_width=True)
 
 
@@ -986,11 +976,9 @@ def render_platform() -> None:
     st.caption("Operational map of the services behind this portfolio data product.")
 
     service_rows = [
-        {"LAYER": "Warehouse", "TECH": "Snowflake", "ROLE": "Bronze, Silver, Gold analytical storage"},
-        {"LAYER": "Events", "TECH": "Kafka", "ROLE": "New recipe content detection events"},
-        {"LAYER": "Orchestration", "TECH": "Airflow", "ROLE": "Pipeline scheduling and job dependency management"},
-        {"LAYER": "Transformation", "TECH": "dbt", "ROLE": "Gold serving views for API and dashboard consumers"},
-        {"LAYER": "Batch analytics", "TECH": "PySpark", "ROLE": "Aggregate analytics tables by cuisine, ingredient, language, and model"},
+        {"LAYER": "Demo database", "TECH": "DuckDB", "ROLE": "Curated recipe catalog and aggregate tables"},
+        {"LAYER": "Transformation", "TECH": "Python + dbt-duckdb", "ROLE": "Local Gold serving tables for API and dashboard consumers"},
+        {"LAYER": "Batch analytics", "TECH": "DuckDB SQL", "ROLE": "Aggregate analytics tables by cuisine, ingredient, language, and model"},
         {"LAYER": "Enrichment", "TECH": "OpenRouter / LLM", "ROLE": "Semantic extraction from recipe descriptions"},
         {"LAYER": "Serving", "TECH": "FastAPI", "ROLE": "HTTP API over curated recipe data"},
         {"LAYER": "Dashboard", "TECH": "Streamlit", "ROLE": "Interactive analytics and quality review app"},
@@ -1003,8 +991,6 @@ def render_platform() -> None:
         [
             {"SERVICE": "Streamlit", "LOCAL_URL": "http://127.0.0.1:18501"},
             {"SERVICE": "FastAPI docs", "LOCAL_URL": "http://127.0.0.1:18000/docs"},
-            {"SERVICE": "Airflow", "LOCAL_URL": "http://127.0.0.1:18080"},
-            {"SERVICE": "Portainer", "LOCAL_URL": "http://127.0.0.1:19000"},
         ]
     )
     st.dataframe(endpoints, use_container_width=True, hide_index=True)
@@ -1017,7 +1003,7 @@ def main() -> None:
     try:
         df = load_catalog()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Unable to load data from Snowflake: {exc}")
+        st.error(f"Unable to load data from DuckDB: {exc}")
         st.info("Run dbt from the `dbt_project/` directory before opening the app.")
         st.stop()
 
